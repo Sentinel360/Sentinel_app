@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Sentinel 360",
+    "slug": "sentinel360-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#4A6CF7"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sentinel360.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Sentinel 360 needs your location to track trips and ensure your safety.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Sentinel 360 needs your location to track trips and share with emergency contacts when needed."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4A6CF7"
+      },
+      "package": "com.sentinel360.mobile",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Sentinel 360 to use your location for trip tracking and emergency alerts."
+        }
+      ],
+      "expo-asset",
+      "expo-font"
+    ]
+  }
+}
