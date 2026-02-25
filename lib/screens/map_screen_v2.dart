@@ -8,6 +8,7 @@ import '../providers/theme_provider.dart';
 import '../services/trip_manager.dart';
 import '../services/sensor_service.dart';
 import '../services/ble_service.dart';
+import '../services/route_service.dart'; // Import RouteService
 
 // ── Ghana locations ───────────────────────────────────────────────────────────
 const List<Map<String, dynamic>> kGhanaLocations = [
@@ -51,6 +52,7 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
+  final RouteService _routeService = RouteService(); // Initialize RouteService
   GoogleMapController? _mapController;
   late AnimationController _panelController;
   late AnimationController _pulseController;
@@ -132,8 +134,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     FocusScope.of(context).unfocus();
   }
 
-  void _buildRoute(Map<String, dynamic> dest) {
+  // Updated _buildRoute to fetch real road points from RouteService
+  Future<void> _buildRoute(Map<String, dynamic> dest) async {
     final dLatLng = LatLng(dest['lat'] as double, dest['lon'] as double);
+
+    // Initial markers for origin and destination
     setState(() {
       _markers = {
         Marker(
@@ -149,16 +154,50 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           infoWindow: InfoWindow(title: dest['name'] as String),
         ),
       };
-      _polylines = {
-        Polyline(
-          polylineId: const PolylineId('route'),
-          points: [_origin, dLatLng],
-          color: const Color(0xFF3B82F6),
-          width: 4,
-          patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-        ),
-      };
     });
+
+    try {
+      // Fetch actual road coordinates using Directions API through RouteService
+      final routePoints = await _routeService.fetchRoute(
+        startLat: _origin.latitude,
+        startLng: _origin.longitude,
+        endLat: dLatLng.latitude,
+        endLng: dLatLng.longitude,
+      );
+
+      final polylinePoints = routePoints
+          .map((gp) => LatLng(gp.latitude, gp.longitude))
+          .toList();
+
+      setState(() {
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId('route'),
+            points: polylinePoints,
+            color: const Color(0xFF3B82F6),
+            width: 5,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        };
+      });
+    } catch (e) {
+      debugPrint("Route fetching error: $e. Falling back to straight line.");
+      // Fallback to a straight dash line if API fails
+      setState(() {
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId('route'),
+            points: [_origin, dLatLng],
+            color: const Color(0xFF3B82F6).withOpacity(0.5),
+            width: 4,
+            patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+          ),
+        };
+      });
+    }
+
     _mapController?.animateCamera(
       CameraUpdate.newLatLngBounds(
         LatLngBounds(
