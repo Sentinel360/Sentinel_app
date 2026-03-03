@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "687324217816",
+    "project_id": "sentinel360-final",
+    "storage_bucket": "sentinel360-final.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:687324217816:android:48fb5aa808d99e4b0b32ad",
+        "android_client_info": {
+          "package_name": "com.example.capstone_final_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "687324217816-rf0fgie7b4p4qkrljiab3ro6l4cl82m0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.capstone_final_app",
+            "certificate_hash": "e30905e65d076bc87dec759f24c0250dfba89872"
+          }
+        },
+        {
+          "client_id": "687324217816-emgtc01vkrug9to6ln70pc3s22m55ut9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCYhxvbvr7408LyqM_5yNiPPFnv3agTZ-E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "687324217816-emgtc01vkrug9to6ln70pc3s22m55ut9.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "687324217816-cjr3p3bhok2mrtsu3e3pqkc3qq0cba7g.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.capstoneFinalApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import 'dart:math' as math;
 import '../services/auth_service.dart';
 import '../services/trip_service.dart';
 import '../services/device_service.dart';
+import '../services/trip_manager.dart';
 import '../models/trip_model.dart';
 import '../models/device_model.dart';
 import '../models/user_model.dart';
@@ -92,6 +94,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final tripState = context.watch<ActiveTripState>();
+    final hasActiveTrip = tripState.phase == TripPhase.active;
     final firstName = _firstName;
 
     final initials = _initials;
@@ -162,18 +166,24 @@ class _HomeScreenState extends State<HomeScreen>
                                       Container(
                                         width: 6,
                                         height: 6,
-                                        decoration: const BoxDecoration(
-                                          color: Color(0xFF10B981),
+                                        decoration: BoxDecoration(
+                                          color: hasActiveTrip
+                                              ? const Color(0xFFF59E0B)
+                                              : const Color(0xFF10B981),
                                           shape: BoxShape.circle,
                                         ),
                                       ),
                                       const SizedBox(width: 8),
                                       Text(
-                                        'All systems operational',
+                                        hasActiveTrip
+                                            ? 'Trip in progress'
+                                            : 'All systems operational',
                                         style: GoogleFonts.inter(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w500,
-                                          color: const Color(0xFF10B981),
+                                          color: hasActiveTrip
+                                              ? const Color(0xFFF59E0B)
+                                              : const Color(0xFF10B981),
                                         ),
                                       ),
                                     ],
@@ -230,7 +240,46 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                             ],
                           ),
-                          const SizedBox(height: 32),
+                          const SizedBox(height: 16),
+
+                          if (hasActiveTrip)
+                            GestureDetector(
+                              onTap: () =>
+                                  Navigator.pushReplacementNamed(context, '/map'),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                margin: const EdgeInsets.only(bottom: 16),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                  color: const Color(0xFF0F172A),
+                                  border: Border.all(
+                                    color: const Color(0xFFF59E0B),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.directions_car_filled_outlined,
+                                      color: Color(0xFFF59E0B),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        'Active trip running — tap to return to live map',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                          const SizedBox(height: 16),
 
                           // Device Status Card
                           AnimatedBuilder(

@@ -23,7 +23,7 @@ android {
 
     // Load API key from key.properties
     val keyProperties = Properties()
-    val keyPropertiesFile = rootProject.file("android/key.properties")
+    val keyPropertiesFile = rootProject.file("key.properties")
     if (keyPropertiesFile.exists()) {
         keyPropertiesFile.inputStream().use { keyProperties.load(it) }
     }

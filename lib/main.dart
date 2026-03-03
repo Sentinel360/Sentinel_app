@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'firebase_options.dart';
 import 'providers/theme_provider.dart';
+import 'services/trip_manager.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/home_screen.dart';
@@ -27,10 +29,27 @@ void main() async {
     );
   }
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // On mobile/desktop targets that have native Firebase config files, prefer
+  // Firebase.initializeApp() without explicit options. This avoids hard-crashing
+  // if dotenv keys are missing/empty.
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS)) {
+    await Firebase.initializeApp();
+  } else {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  }
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        // Expose the active trip state globally so all screens stay in sync.
+        StreamProvider<ActiveTripState>(
+          create: (_) => TripManager().stateStream,
+          initialData: TripManager().currentState,
+        ),
+      ],
       child: const MyApp(),
     ),
   );

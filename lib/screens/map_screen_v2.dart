@@ -1,32 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/trip_manager.dart';
 import '../services/sensor_service.dart';
 import '../services/ble_service.dart';
-import '../services/route_service.dart'; // Import RouteService
+import '../services/route_service.dart';
 
-// ── Ghana locations ───────────────────────────────────────────────────────────
-const List<Map<String, dynamic>> kGhanaLocations = [
-  {'name': 'Kotoka International Airport', 'lat': 5.6052, 'lon': -0.1668},
-  {'name': 'Accra Mall', 'lat': 5.6361, 'lon': -0.1769},
-  {'name': 'University of Ghana', 'lat': 5.6502, 'lon': -0.1870},
-  {'name': 'Kwame Nkrumah Memorial Park', 'lat': 5.5501, 'lon': -0.2069},
-  {'name': 'Labadi Beach', 'lat': 5.5571, 'lon': -0.1225},
-  {'name': 'Osu Castle', 'lat': 5.5480, 'lon': -0.1733},
-  {'name': 'Tema Station', 'lat': 5.5488, 'lon': -0.2095},
-  {'name': 'East Legon', 'lat': 5.6360, 'lon': -0.1520},
-  {'name': 'Cantonments', 'lat': 5.5758, 'lon': -0.1676},
-  {'name': 'Labone', 'lat': 5.5812, 'lon': -0.1620},
-  {'name': 'Spintex Road', 'lat': 5.6178, 'lon': -0.1196},
-  {'name': 'Dansoman', 'lat': 5.5392, 'lon': -0.2532},
-];
-
-// ── Helpers: convert RiskUpdate string fields to Flutter types ────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 Color _riskToColor(String? riskColor) {
   switch (riskColor) {
     case 'orange':
@@ -34,25 +22,38 @@ Color _riskToColor(String? riskColor) {
     case 'red':
       return const Color(0xFFEF4444);
     default:
-      return const Color(0xFF10B981); // green / null → safe
+      return const Color(0xFF10B981);
   }
 }
 
 bool _isHighRisk(String? riskLevel) => riskLevel == 'HIGH RISK';
 
-// ── Screen phases ─────────────────────────────────────────────────────────────
+const LatLng _kAccraCenter = LatLng(5.6037, -0.1870);
+
+// ── Places suggestion model ───────────────────────────────────────────────────
+class _PlaceSuggestion {
+  final String placeId;
+  final String mainText;
+  final String secondaryText;
+
+  _PlaceSuggestion({
+    required this.placeId,
+    required this.mainText,
+    required this.secondaryText,
+  });
+}
+
 enum _MapPhase { search, preview, active }
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
-
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
 class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
-  final RouteService _routeService = RouteService(); // Initialize RouteService
+  final RouteService _routeService = RouteService();
   GoogleMapController? _mapController;
   late AnimationController _panelController;
   late AnimationController _pulseController;
@@ -60,14 +61,34 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   late Animation<double> _pulseAnim;
 
   _MapPhase _screen = _MapPhase.search;
-  List<Map<String, dynamic>> _suggestions = [];
-  Map<String, dynamic>? _dest;
+
+  // Places autocomplete
+  List<_PlaceSuggestion> _suggestions = [];
+  bool _suggestionsLoading = false;
+  Timer? _debounce;
+
+  // Selected destination
+  String? _destName;
+  LatLng? _destLatLng;
+
   Set<Marker> _markers = {};
   Set<Polyline> _polylines = {};
-  final LatLng _origin = const LatLng(5.6037, -0.1870); // Accra center
+
+  // Real user location
+  LatLng? _userLocation;
+  bool _locationLoading = true;
+  bool _hasLocationPermission = false;
+  StreamSubscription<Position>? _locationSub;
 
   ActiveTripState? _tripState;
   StreamSubscription<ActiveTripState>? _tripSub;
+
+  LatLng get _origin => _userLocation ?? _kAccraCenter;
+  // Web Services key (Places REST). Keep Maps SDK key in AndroidManifest via MAPS_API_KEY.
+  String get _placesKey => dotenv.env['GOOGLE_MAPS_WEB_API_KEY'] ??
+      dotenv.env['GOOGLE_PLACES_API_KEY'] ??
+      dotenv.env['GOOGLE_MAPS_API_KEY'] ??
+      '';
 
   @override
   void initState() {
@@ -96,6 +117,81 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (mounted) setState(() => _tripState = s);
     });
     _tripState = TripManager().currentState;
+
+    _initLocation();
+  }
+
+  // ── Location ──────────────────────────────────────────────────────────────
+
+  Future<void> _initLocation() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+          setState(() {
+            _locationLoading = false;
+            _hasLocationPermission = false;
+          });
+        }
+        return;
+      }
+
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.deniedForever) {
+        if (mounted) {
+          setState(() {
+            _locationLoading = false;
+            _hasLocationPermission = false;
+          });
+        }
+        return;
+      }
+
+      // For Maps "my location" layer, allow either whileInUse or always.
+      final granted = perm == LocationPermission.whileInUse ||
+          perm == LocationPermission.always;
+
+      final Position pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+
+      if (mounted) {
+        setState(() {
+          _userLocation = LatLng(pos.latitude, pos.longitude);
+          _locationLoading = false;
+          _hasLocationPermission = granted;
+        });
+        _mapController?.animateCamera(
+          CameraUpdate.newLatLngZoom(_userLocation!, 15),
+        );
+      }
+
+      _locationSub =
+          Geolocator.getPositionStream(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              distanceFilter: 10,
+            ),
+          ).listen((Position p) {
+            if (mounted) {
+              setState(() => _userLocation = LatLng(p.latitude, p.longitude));
+            }
+          });
+    } catch (e) {
+      debugPrint('MapScreen: location error - $e');
+      if (mounted) {
+        setState(() {
+          _locationLoading = false;
+          _hasLocationPermission = false;
+        });
+      }
+    }
   }
 
   @override
@@ -105,67 +201,166 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _panelController.dispose();
     _pulseController.dispose();
     _tripSub?.cancel();
+    _locationSub?.cancel();
+    _debounce?.cancel();
     super.dispose();
   }
 
-  // ── Search ────────────────────────────────────────────────────────────────
+  // ── Places Autocomplete ───────────────────────────────────────────────────
 
   void _onSearchChanged(String q) {
+    _debounce?.cancel();
     if (q.isEmpty) {
       setState(() => _suggestions = []);
       return;
     }
-    final lower = q.toLowerCase();
-    setState(() {
-      _suggestions = kGhanaLocations
-          .where((l) => (l['name'] as String).toLowerCase().contains(lower))
-          .toList();
+    // Debounce: wait 400ms after user stops typing before calling API
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      _fetchSuggestions(q);
     });
   }
 
-  void _selectDest(Map<String, dynamic> loc) {
-    _searchController.text = loc['name'] as String;
-    setState(() {
-      _dest = loc;
-      _suggestions = [];
-      _screen = _MapPhase.preview;
-    });
-    _buildRoute(loc);
+  Future<void> _fetchSuggestions(String input) async {
+    if (_placesKey.isEmpty) {
+      debugPrint('MapScreen: no API key for Places');
+      return;
+    }
+
+    setState(() => _suggestionsLoading = true);
+
+    try {
+      // Bias results toward Ghana using location + radius
+      final origin = _origin;
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+        '?input=${Uri.encodeComponent(input)}'
+        '&location=${origin.latitude},${origin.longitude}'
+        '&radius=50000' // 50km bias radius around user
+        '&components=country:gh' // restrict to Ghana
+        '&key=$_placesKey',
+      );
+
+      final response = await http.get(url);
+      if (!mounted) return;
+
+      final data = json.decode(response.body);
+
+      if (data['status'] == 'OK') {
+        final predictions = data['predictions'] as List;
+        setState(() {
+          _suggestions = predictions.map((p) {
+            final structured = p['structured_formatting'];
+            return _PlaceSuggestion(
+              placeId: p['place_id'] as String,
+              mainText: structured['main_text'] as String,
+              secondaryText: (structured['secondary_text'] ?? '') as String,
+            );
+          }).toList();
+          _suggestionsLoading = false;
+        });
+      } else {
+        debugPrint(
+          'Places API: ${data['status']}'
+          '${data['error_message'] != null ? ' — ${data['error_message']}' : ''}',
+        );
+        setState(() {
+          _suggestions = [];
+          _suggestionsLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Places autocomplete error: $e');
+      if (mounted)
+        setState(() {
+          _suggestions = [];
+          _suggestionsLoading = false;
+        });
+    }
+  }
+
+  Future<void> _selectSuggestion(_PlaceSuggestion suggestion) async {
     FocusScope.of(context).unfocus();
+    _searchController.text = suggestion.mainText;
+    setState(() {
+      _suggestions = [];
+    });
+
+    // Resolve place_id → lat/lng using Place Details API
+    try {
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/place/details/json'
+        '?place_id=${suggestion.placeId}'
+        '&fields=geometry,name'
+        '&key=$_placesKey',
+      );
+      final response = await http.get(url);
+      final data = json.decode(response.body);
+
+      if (data['status'] == 'OK') {
+        final loc = data['result']['geometry']['location'];
+        final latLng = LatLng(
+          (loc['lat'] as num).toDouble(),
+          (loc['lng'] as num).toDouble(),
+        );
+        final name = data['result']['name'] as String;
+
+        setState(() {
+          _destName = name;
+          _destLatLng = latLng;
+          _screen = _MapPhase.preview;
+        });
+        _buildRoute(latLng, name);
+      }
+    } catch (e) {
+      debugPrint('Place details error: $e');
+    }
   }
 
-  // Updated _buildRoute to fetch real road points from RouteService
-  Future<void> _buildRoute(Map<String, dynamic> dest) async {
-    final dLatLng = LatLng(dest['lat'] as double, dest['lon'] as double);
+  // ── Route building ────────────────────────────────────────────────────────
 
-    // Initial markers for origin and destination
+  Future<void> _buildRoute(LatLng dest, String destName) async {
+    final origin = _origin;
+
     setState(() {
       _markers = {
         Marker(
           markerId: const MarkerId('origin'),
-          position: _origin,
+          position: origin,
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
           infoWindow: const InfoWindow(title: 'You are here'),
         ),
         Marker(
           markerId: const MarkerId('dest'),
-          position: dLatLng,
+          position: dest,
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-          infoWindow: InfoWindow(title: dest['name'] as String),
+          infoWindow: InfoWindow(title: destName),
+        ),
+      };
+      // Dashed placeholder while API call is in flight
+      _polylines = {
+        Polyline(
+          polylineId: const PolylineId('route'),
+          points: [origin, dest],
+          color: const Color(0xFF3B82F6).withOpacity(0.4),
+          width: 4,
+          patterns: [PatternItem.dash(20), PatternItem.gap(10)],
         ),
       };
     });
 
+    _fitCamera(origin, dest);
+
     try {
-      // Fetch actual road coordinates using Directions API through RouteService
       final routePoints = await _routeService.fetchRoute(
-        startLat: _origin.latitude,
-        startLng: _origin.longitude,
-        endLat: dLatLng.latitude,
-        endLng: dLatLng.longitude,
+        startLat: origin.latitude,
+        startLng: origin.longitude,
+        endLat: dest.latitude,
+        endLng: dest.longitude,
       );
 
-      final polylinePoints = routePoints
+      if (!mounted) return;
+
+      final pts = routePoints
           .map((gp) => LatLng(gp.latitude, gp.longitude))
           .toList();
 
@@ -173,7 +368,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _polylines = {
           Polyline(
             polylineId: const PolylineId('route'),
-            points: polylinePoints,
+            points: pts,
             color: const Color(0xFF3B82F6),
             width: 5,
             jointType: JointType.round,
@@ -182,32 +377,24 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ),
         };
       });
-    } catch (e) {
-      debugPrint("Route fetching error: $e. Falling back to straight line.");
-      // Fallback to a straight dash line if API fails
-      setState(() {
-        _polylines = {
-          Polyline(
-            polylineId: const PolylineId('route'),
-            points: [_origin, dLatLng],
-            color: const Color(0xFF3B82F6).withOpacity(0.5),
-            width: 4,
-            patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-          ),
-        };
-      });
-    }
 
+      if (pts.length > 1) _fitCameraToPolyline(pts);
+    } catch (e) {
+      debugPrint('Route error: $e — keeping straight-line fallback');
+    }
+  }
+
+  void _fitCamera(LatLng a, LatLng b) {
     _mapController?.animateCamera(
       CameraUpdate.newLatLngBounds(
         LatLngBounds(
           southwest: LatLng(
-            math.min(_origin.latitude, dLatLng.latitude) - 0.01,
-            math.min(_origin.longitude, dLatLng.longitude) - 0.01,
+            math.min(a.latitude, b.latitude) - 0.01,
+            math.min(a.longitude, b.longitude) - 0.01,
           ),
           northeast: LatLng(
-            math.max(_origin.latitude, dLatLng.latitude) + 0.01,
-            math.max(_origin.longitude, dLatLng.longitude) + 0.01,
+            math.max(a.latitude, b.latitude) + 0.01,
+            math.max(a.longitude, b.longitude) + 0.01,
           ),
         ),
         80,
@@ -215,16 +402,36 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _fitCameraToPolyline(List<LatLng> pts) {
+    double minLat = pts.first.latitude, maxLat = pts.first.latitude;
+    double minLng = pts.first.longitude, maxLng = pts.first.longitude;
+    for (final p in pts) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat - 0.005, minLng - 0.005),
+          northeast: LatLng(maxLat + 0.005, maxLng + 0.005),
+        ),
+        60,
+      ),
+    );
+  }
+
   // ── Trip lifecycle ────────────────────────────────────────────────────────
 
   Future<void> _startTrip() async {
-    if (_dest == null) return;
+    if (_destLatLng == null || _destName == null) return;
     final String? id = await TripManager().startTrip(
       originLat: _origin.latitude,
       originLon: _origin.longitude,
-      destLat: _dest!['lat'] as double,
-      destLon: _dest!['lon'] as double,
-      destinationName: _dest!['name'] as String,
+      destLat: _destLatLng!.latitude,
+      destLon: _destLatLng!.longitude,
+      destinationName: _destName!,
     );
     if (id != null && mounted) {
       setState(() => _screen = _MapPhase.active);
@@ -240,7 +447,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (mounted) {
       setState(() {
         _screen = _MapPhase.search;
-        _dest = null;
+        _destName = null;
+        _destLatLng = null;
         _markers = {};
         _polylines = {};
         _searchController.clear();
@@ -276,7 +484,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final RiskUpdate? risk = _tripState?.latestRisk;
     final Color rc = _riskToColor(risk?.riskColor);
 
-    // Update polyline colour live during active trip
     if (_screen == _MapPhase.active && risk != null && _polylines.isNotEmpty) {
       _polylines = {
         Polyline(
@@ -284,6 +491,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           points: _polylines.first.points,
           color: rc,
           width: 5,
+          jointType: JointType.round,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
         ),
       };
     }
@@ -294,19 +504,73 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           : const Color(0xFFF1F5F9),
       body: Stack(
         children: [
-          // Map
           GoogleMap(
-            initialCameraPosition: CameraPosition(target: _origin, zoom: 13),
+            initialCameraPosition: const CameraPosition(
+              target: _kAccraCenter,
+              zoom: 13,
+            ),
             onMapCreated: (c) {
               _mapController = c;
               if (isDark) c.setMapStyle(_kDarkMapStyle);
+              if (_userLocation != null) {
+                c.animateCamera(CameraUpdate.newLatLngZoom(_userLocation!, 15));
+              }
             },
             markers: _markers,
             polylines: _polylines,
-            myLocationEnabled: true,
+            myLocationEnabled: _hasLocationPermission,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
           ),
+
+          // GPS loading indicator
+          if (_locationLoading)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 60,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF3B82F6),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Getting your location...',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: isDark
+                              ? const Color(0xFF94A3B8)
+                              : const Color(0xFF64748B),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
 
           // My location button
           Positioned(
@@ -314,20 +578,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             right: 16,
             child: _mapBtn(
               icon: Icons.my_location_rounded,
-              onTap: () => _mapController?.animateCamera(
-                CameraUpdate.newLatLngZoom(_origin, 15),
-              ),
+              onTap: () {
+                if (_userLocation != null) {
+                  _mapController?.animateCamera(
+                    CameraUpdate.newLatLngZoom(_userLocation!, 16),
+                  );
+                }
+              },
               isDark: isDark,
             ),
           ),
 
-          // Active header
           if (_screen == _MapPhase.active) _buildActiveHeader(isDark, risk, rc),
 
-          // Sensor badge
           if (_screen != _MapPhase.search) _buildSensorBadge(isDark),
 
-          // Bottom panel
           Positioned(
             bottom: 0,
             left: 0,
@@ -402,7 +667,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     ),
                   ),
                   Text(
-                    _dest?['name'] ?? 'Active Trip',
+                    _destName ?? 'Active Trip',
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       color: isDark
@@ -536,7 +801,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           if (_screen == _MapPhase.search)
             _searchPanel(isDark, tp, ts, surf, bdr)
           else if (_screen == _MapPhase.preview)
-            _previewPanel(isDark, tp, ts, surf, bdr)
+            _previewPanel(isDark, tp, ts)
           else
             _activePanel(isDark, risk, rc, tp, ts),
         ],
@@ -566,9 +831,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             onChanged: _onSearchChanged,
             style: GoogleFonts.inter(color: tp, fontSize: 14),
             decoration: InputDecoration(
-              hintText: 'Search destination...',
+              hintText: 'Search any location in Ghana...',
               hintStyle: GoogleFonts.inter(color: ts, fontSize: 14),
               prefixIcon: Icon(Icons.search, color: ts, size: 20),
+              suffixIcon: _suggestionsLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF3B82F6),
+                        ),
+                      ),
+                    )
+                  : null,
               filled: true,
               fillColor: isDark
                   ? const Color(0xFF1E293B).withOpacity(0.6)
@@ -606,22 +884,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 children: _suggestions
                     .take(5)
                     .map(
-                      (loc) => ListTile(
+                      (s) => ListTile(
                         leading: const Icon(
                           Icons.location_on_outlined,
                           color: Color(0xFF3B82F6),
                           size: 18,
                         ),
                         title: Text(
-                          loc['name'] as String,
+                          s.mainText,
                           style: GoogleFonts.inter(
                             fontSize: 13,
                             color: tp,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
+                        subtitle: s.secondaryText.isNotEmpty
+                            ? Text(
+                                s.secondaryText,
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  color: ts,
+                                ),
+                              )
+                            : null,
                         dense: true,
-                        onTap: () => _selectDest(loc),
+                        onTap: () => _selectSuggestion(s),
                       ),
                     )
                     .toList(),
@@ -635,7 +922,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   // ── Preview panel ─────────────────────────────────────────────────────────
 
-  Widget _previewPanel(bool isDark, Color tp, Color ts, Color surf, Color bdr) {
+  Widget _previewPanel(bool isDark, Color tp, Color ts) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
       child: Column(
@@ -646,6 +933,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               GestureDetector(
                 onTap: () => setState(() {
                   _screen = _MapPhase.search;
+                  _destName = null;
+                  _destLatLng = null;
                   _markers = {};
                   _polylines = {};
                 }),
@@ -663,7 +952,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  _dest?['name'] ?? '',
+                  _destName ?? '',
                   style: GoogleFonts.inter(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
@@ -678,7 +967,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _routeRow(
             icon: Icons.my_location,
             color: const Color(0xFF3B82F6),
-            label: 'Current Location',
+            label: 'Your current location',
             ts: ts,
           ),
           Padding(
@@ -692,7 +981,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _routeRow(
             icon: Icons.location_on,
             color: const Color(0xFFEF4444),
-            label: _dest?['name'] ?? '',
+            label: _destName ?? '',
             ts: ts,
           ),
           const SizedBox(height: 20),
@@ -776,7 +1065,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
       child: Column(
         children: [
-          // Risk card
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -837,8 +1125,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ),
           const SizedBox(height: 14),
-
-          // Stats row
           Row(
             children: [
               Expanded(
@@ -876,8 +1162,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ],
           ),
           const SizedBox(height: 14),
-
-          // End trip
           SizedBox(
             width: double.infinity,
             height: 50,
@@ -956,8 +1240,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
   String _fmtDuration(Duration d) {
     final h = d.inHours;
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -994,8 +1276,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ),
     );
   }
-
-  // ── Nav bar ───────────────────────────────────────────────────────────────
 
   Widget _buildNavBar(bool isDark) {
     return Container(
@@ -1109,7 +1389,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 }
 
-// ── Dark map style ────────────────────────────────────────────────────────────
 const String _kDarkMapStyle = '''
 [
   {"elementType": "geometry", "stylers": [{"color": "#0f172a"}]},

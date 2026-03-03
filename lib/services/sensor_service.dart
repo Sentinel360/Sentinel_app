@@ -241,11 +241,18 @@ class SensorService {
     _activeSensor = to;
     print('[SensorService] Switching to ${to.name} — $reason');
     if (_currentTripId != null) {
-      _db.collection('trips').doc(_currentTripId).update({
-        'active_sensor': to == ActiveSensor.iot ? 'IOT' : 'PHONE',
-        'sensor_switch_reason': reason,
-        'sensor_switched_at': FieldValue.serverTimestamp(),
-      });
+      // Avoid unhandled async errors crashing the app.
+      () async {
+        try {
+          await _db.collection('trips').doc(_currentTripId).update({
+            'active_sensor': to == ActiveSensor.iot ? 'IOT' : 'PHONE',
+            'sensor_switch_reason': reason,
+            'sensor_switched_at': FieldValue.serverTimestamp(),
+          });
+        } catch (e) {
+          print('[SensorService] Failed to persist sensor switch: $e');
+        }
+      }();
     }
   }
 
@@ -277,6 +284,10 @@ class SensorService {
 
   // ── Location permission ────────────────────────────────────────────────────
   Future<void> _ensureLocationPermission() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw Exception('Location services are disabled.');
+    }
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();

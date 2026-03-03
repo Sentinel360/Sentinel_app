@@ -7,8 +7,11 @@ import 'trip_service.dart';
 class RouteService {
   final TripService _tripService = TripService();
 
-  // API key loaded from environment variables
-  String get _apiKey => dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+  // Web Services key (Directions/Places REST). Do NOT use the Android SDK key here
+  // if it's restricted to Android apps (package/SHA1), or you'll get REQUEST_DENIED.
+  String get _apiKey => dotenv.env['GOOGLE_MAPS_WEB_API_KEY'] ??
+      dotenv.env['GOOGLE_MAPS_API_KEY'] ??
+      '';
 
   // Fetch route from Google Maps Directions API
   Future<List<GeoPoint>> fetchRoute({
@@ -20,7 +23,7 @@ class RouteService {
     final apiKey = _apiKey;
     if (apiKey.isEmpty) {
       throw Exception(
-        'Google Maps API key not found in environment variables.',
+        'Google Maps Web Services API key not found. Set GOOGLE_MAPS_WEB_API_KEY in .env.',
       );
     }
 

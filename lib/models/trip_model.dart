@@ -32,26 +32,61 @@ class TripModel {
   });
 
   factory TripModel.fromMap(String tripId, Map<String, dynamic> data) {
+    final durationRaw = data['duration'];
+    final escalationRaw = data['escalationAttempts'];
     return TripModel(
       tripId: tripId,
       userId: data['userId'] ?? '',
       deviceId: data['deviceId'] ?? '',
-      startLocation: data['startLocation'] as GeoPoint,
-      endLocation: data['endLocation'] as GeoPoint?,
+
+      // FIX 1: startLocation may be null in older/partial trip documents
+      startLocation: data['startLocation'] is GeoPoint
+          ? data['startLocation'] as GeoPoint
+          : const GeoPoint(5.6037, -0.1870), // fallback: Accra center
+      // FIX 2: endLocation — safe nullable cast
+      endLocation: data['endLocation'] is GeoPoint
+          ? data['endLocation'] as GeoPoint
+          : null,
+
       distance: (data['distance'] ?? 0.0).toDouble(),
-      duration: data['duration'] ?? 0,
+      // Guard against null or non-int numeric values.
+      duration: durationRaw is int
+          ? durationRaw
+          : durationRaw is num
+          ? durationRaw.toInt()
+          : 0,
       status: data['status'] ?? 'active',
+
       anomalies: (data['anomalies'] as List<dynamic>? ?? [])
-          .map((e) => AnomalyEvent.fromMap(e as Map<String, dynamic>))
+          .whereType<Map<String, dynamic>>()
+          .map((e) => AnomalyEvent.fromMap(e))
           .toList(),
-      startedAt: (data['startedAt'] as Timestamp).toDate(),
-      endedAt: data['endedAt'] != null
+
+      // FIX 3: startedAt may be null if serverTimestamp() hasn't resolved yet
+      startedAt: data['startedAt'] is Timestamp
+          ? (data['startedAt'] as Timestamp).toDate()
+          : DateTime.now(),
+
+      endedAt: data['endedAt'] is Timestamp
           ? (data['endedAt'] as Timestamp).toDate()
           : null,
-      routePolyline: (data['routePolyline'] as List<dynamic>? ?? [])
-          .map((e) => e as GeoPoint)
-          .toList(),
-      escalationAttempts: data['escalationAttempts'] ?? 0,
+
+      // FIX 4: routePolyline stored as List<Map> by route_service, not List<GeoPoint>
+      routePolyline: (data['routePolyline'] as List<dynamic>? ?? []).map((e) {
+        if (e is GeoPoint) return e;
+        if (e is Map) {
+          final lat = (e['lat'] ?? e['latitude'] ?? 0.0) as num;
+          final lng = (e['lng'] ?? e['longitude'] ?? 0.0) as num;
+          return GeoPoint(lat.toDouble(), lng.toDouble());
+        }
+        return const GeoPoint(0, 0);
+      }).toList(),
+
+      escalationAttempts: escalationRaw is int
+          ? escalationRaw
+          : escalationRaw is num
+          ? escalationRaw.toInt()
+          : 0,
     );
   }
 
@@ -67,7 +102,10 @@ class TripModel {
       'anomalies': anomalies.map((e) => e.toMap()).toList(),
       'startedAt': Timestamp.fromDate(startedAt),
       'endedAt': endedAt != null ? Timestamp.fromDate(endedAt!) : null,
-      'routePolyline': routePolyline,
+      // Store polyline consistently as List<Map> so fromMap can always read it
+      'routePolyline': routePolyline
+          .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+          .toList(),
       'escalationAttempts': escalationAttempts,
     };
   }
@@ -90,7 +128,10 @@ class AnomalyEvent {
     return AnomalyEvent(
       type: data['type'] ?? '',
       location: data['location'] ?? '',
-      detectedAt: (data['detectedAt'] as Timestamp).toDate(),
+      // Safe Timestamp read — anomaly may have been written with serverTimestamp
+      detectedAt: data['detectedAt'] is Timestamp
+          ? (data['detectedAt'] as Timestamp).toDate()
+          : DateTime.now(),
       severity: data['severity'] ?? 'low',
     );
   }

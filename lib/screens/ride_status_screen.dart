@@ -62,8 +62,11 @@ class _RideStatusScreenState extends State<RideStatusScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scaffoldBg =
+        isDark ? const Color(0xFF050A14) : const Color(0xFFF1F5F9);
     return Scaffold(
-      backgroundColor: const Color(0xFF050A14),
+      backgroundColor: scaffoldBg,
       body: Stack(
         children: [
           // Animated Background
