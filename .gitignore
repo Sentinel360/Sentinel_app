@@ -25,3 +25,4 @@ build/
 # Sensitive files
 .env
 **/GoogleService-Info.plist
+key.properties

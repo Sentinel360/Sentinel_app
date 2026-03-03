@@ -46,7 +46,7 @@
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     <key>GoogleMapsApiKey</key>
-    <string>AIzaSyB_txRqjqYPv_6yDGocF1Bxux1xUYN_gDo</string>
+    <string>GOOGLE_MAPS_API_KEY</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Sentinel 360 needs your location to monitor trip safety.</string>
     <key>NSLocationAlwaysUsageDescription</key>
