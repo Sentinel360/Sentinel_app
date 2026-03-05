@@ -51,7 +51,7 @@ class _SplashScreenState extends State<SplashScreen>
     // Navigate to auth wrapper after 2.8 seconds
     Timer(const Duration(milliseconds: 2800), () {
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/onboarding');
+        Navigator.of(context).pushReplacementNamed('/auth');
       }
     });
   }
@@ -75,7 +75,10 @@ class _SplashScreenState extends State<SplashScreen>
               animation: _controller,
               builder: (context, child) => Opacity(
                 opacity: _fadeAnim.value,
-                child: Transform.scale(scale: _scaleAnim.value, child: child),
+                child: Transform.scale(
+                  scale: _scaleAnim.value,
+                  child: child,
+                ),
               ),
               child: Image.asset(
                 'assets/images/sentinel_logo.png',
@@ -90,8 +93,10 @@ class _SplashScreenState extends State<SplashScreen>
             // App name fades in after logo
             AnimatedBuilder(
               animation: _controller,
-              builder: (context, child) =>
-                  Opacity(opacity: _textFadeAnim.value, child: child),
+              builder: (context, child) => Opacity(
+                opacity: _textFadeAnim.value,
+                child: child,
+              ),
               child: Column(
                 children: [
                   Text(
@@ -122,8 +127,10 @@ class _SplashScreenState extends State<SplashScreen>
             // Loading indicator at bottom
             AnimatedBuilder(
               animation: _controller,
-              builder: (context, child) =>
-                  Opacity(opacity: _textFadeAnim.value, child: child),
+              builder: (context, child) => Opacity(
+                opacity: _textFadeAnim.value,
+                child: child,
+              ),
               child: SizedBox(
                 width: 32,
                 height: 32,

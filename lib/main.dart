@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'firebase_options.dart';
 import 'providers/theme_provider.dart';
 import 'services/trip_manager.dart';
@@ -16,6 +17,7 @@ import 'screens/profile_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/emergency_contacts_screen.dart';
 import 'widgets/auth_wrapper.dart';
+import 'screens/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,7 +40,9 @@ void main() async {
           defaultTargetPlatform == TargetPlatform.macOS)) {
     await Firebase.initializeApp();
   } else {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
   }
   runApp(
     MultiProvider(
@@ -77,7 +81,8 @@ class MyApp extends StatelessWidget {
       ).copyWith(primaryColor: Colors.blue),
       initialRoute: '/',
       routes: {
-        '/': (context) => const AuthWrapper(),
+        '/': (context) => const SplashScreen(),
+        '/auth': (context) => const AuthWrapper(),
         '/onboarding': (context) => const OnboardingScreen(),
         '/login': (context) => const LoginScreen(),
         '/signup': (context) => const SignupScreen(),

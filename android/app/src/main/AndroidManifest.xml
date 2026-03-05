@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:label="capstone_final_app"
+        android:label="Sentinel 360"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
