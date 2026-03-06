@@ -1,1 +1,55 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"sentinel360-final","appId":"1:687324217816:android:48fb5aa808d99e4b0b32ad","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"sentinel360-final","appId":"1:687324217816:ios:49d746f5829cba230b32ad","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"macos":{"default":{"projectId":"sentinel360-final","appId":"1:687324217816:ios:49d746f5829cba230b32ad","uploadDebugSymbols":false,"fileOutput":"macos/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"sentinel360-final","configurations":{"android":"1:687324217816:android:48fb5aa808d99e4b0b32ad","ios":"1:687324217816:ios:49d746f5829cba230b32ad","macos":"1:687324217816:ios:49d746f5829cba230b32ad","web":"1:687324217816:web:7be80cb0732c61bc0b32ad","windows":"1:687324217816:web:24b2d903005067c10b32ad"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "sentinel360-final",
+          "appId": "1:687324217816:android:48fb5aa808d99e4b0b32ad",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "sentinel360-final",
+          "appId": "1:687324217816:ios:49d746f5829cba230b32ad",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "macos": {
+        "default": {
+          "projectId": "sentinel360-final",
+          "appId": "1:687324217816:ios:49d746f5829cba230b32ad",
+          "uploadDebugSymbols": false,
+          "fileOutput": "macos/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "sentinel360-final",
+          "configurations": {
+            "android": "1:687324217816:android:48fb5aa808d99e4b0b32ad",
+            "ios": "1:687324217816:ios:49d746f5829cba230b32ad",
+            "macos": "1:687324217816:ios:49d746f5829cba230b32ad",
+            "web": "1:687324217816:web:7be80cb0732c61bc0b32ad",
+            "windows": "1:687324217816:web:24b2d903005067c10b32ad"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

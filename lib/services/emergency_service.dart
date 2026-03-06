@@ -6,7 +6,7 @@ class EmergencyService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TripService _tripService = TripService();
 
-  // Trigger an emergency alert
+  // Trigger emergency during an active trip
   Future<String> triggerEmergency({
     required String userId,
     required String tripId,
@@ -22,16 +22,32 @@ class EmergencyService {
       triggerSource: triggerSource,
     );
 
-    // Create the emergency alert document
     final docRef = await _firestore
         .collection('emergency_alerts')
         .add(alert.toMap());
 
     // Update trip status to emergency
-    await _tripService.updateTripStatus(
-      tripId: tripId,
-      status: 'emergency',
-    );
+    await _tripService.updateTripStatus(tripId: tripId, status: 'emergency');
+
+    return docRef.id;
+  }
+
+  // Trigger emergency even without an active trip (e.g. from emergency screen)
+  Future<String> triggerEmergencyNoTrip({
+    required String userId,
+    required GeoPoint location,
+    String triggerSource = 'manual',
+  }) async {
+    final data = {
+      'userId': userId,
+      'tripId': null,
+      'location': location,
+      'triggeredAt': Timestamp.fromDate(DateTime.now()),
+      'resolved': false,
+      'triggerSource': triggerSource,
+    };
+
+    final docRef = await _firestore.collection('emergency_alerts').add(data);
 
     return docRef.id;
   }
@@ -41,19 +57,12 @@ class EmergencyService {
     required String alertId,
     required String tripId,
   }) async {
-    await _firestore
-        .collection('emergency_alerts')
-        .doc(alertId)
-        .update({
+    await _firestore.collection('emergency_alerts').doc(alertId).update({
       'resolved': true,
       'resolvedAt': Timestamp.fromDate(DateTime.now()),
     });
 
-    // Revert trip status back to active
-    await _tripService.updateTripStatus(
-      tripId: tripId,
-      status: 'active',
-    );
+    await _tripService.updateTripStatus(tripId: tripId, status: 'active');
   }
 
   // Stream active emergency alerts for a user
@@ -63,15 +72,15 @@ class EmergencyService {
         .where('userId', isEqualTo: userId)
         .where('resolved', isEqualTo: false)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) =>
-                EmergencyAlertModel.fromMap(doc.id, doc.data()))
-            .toList());
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => EmergencyAlertModel.fromMap(doc.id, doc.data()))
+              .toList(),
+        );
   }
 
   // Get all emergency alerts for a user
-  Future<List<EmergencyAlertModel>> getAlertHistory(
-      String userId) async {
+  Future<List<EmergencyAlertModel>> getAlertHistory(String userId) async {
     final snapshot = await _firestore
         .collection('emergency_alerts')
         .where('userId', isEqualTo: userId)
