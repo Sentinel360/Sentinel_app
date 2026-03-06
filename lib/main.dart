@@ -18,6 +18,7 @@ import 'screens/signup_screen.dart';
 import 'screens/emergency_contacts_screen.dart';
 import 'widgets/auth_wrapper.dart';
 import 'screens/splash_screen.dart';
+import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -73,12 +74,8 @@ class MyApp extends StatelessWidget {
           : themeProvider.mode == AppThemeMode.light
           ? ThemeMode.light
           : ThemeMode.system,
-      theme: ThemeData.light(
-        useMaterial3: false,
-      ).copyWith(primaryColor: Colors.blue),
-      darkTheme: ThemeData.dark(
-        useMaterial3: false,
-      ).copyWith(primaryColor: Colors.blue),
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),

@@ -359,7 +359,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
       backgroundColor: scaffoldBg,
       body: Stack(
         children: [
-          const AnimatedBackground(),
+          AnimatedBackground(isDark: isDark),
           SafeArea(
             child: StreamBuilder<DeviceModel?>(
               stream: _deviceService.streamDeviceByUserId(uid),
@@ -444,7 +444,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
           ),
         ],
       ),
-      bottomNavigationBar: _buildNavBar(),
+      bottomNavigationBar: _buildNavBar(isDark),
     );
   }
 
@@ -898,13 +898,15 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
     return '${diff.inDays}d ago';
   }
 
-  Widget _buildNavBar() {
+  Widget _buildNavBar(bool isDark) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
+        color: isDark ? const Color(0xFF0F172A) : Colors.white,
         border: Border(
           top: BorderSide(
-            color: const Color(0xFF1E293B).withOpacity(0.5),
+            color: isDark
+                ? const Color(0xFF1E293B).withOpacity(0.5)
+                : const Color(0xFFE2E8F0),
             width: 1,
           ),
         ),
@@ -920,6 +922,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 activeIcon: Icons.home,
                 label: 'Home',
                 isActive: false,
+                isDark: isDark,
                 onTap: () => Navigator.pushReplacementNamed(context, '/home'),
               ),
               _navItem(
@@ -927,6 +930,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 activeIcon: Icons.explore,
                 label: 'Map',
                 isActive: false,
+                isDark: isDark,
                 onTap: () => Navigator.pushReplacementNamed(context, '/map'),
               ),
               _navItem(
@@ -935,6 +939,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 label: 'Device',
                 isActive: true,
                 color: const Color(0xFF8B5CF6),
+                isDark: isDark,
                 onTap: () {},
               ),
               _navItem(
@@ -943,6 +948,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 label: 'SOS',
                 isActive: false,
                 color: const Color(0xFFEF4444),
+                isDark: isDark,
                 onTap: () => Navigator.pushNamed(context, '/emergency'),
               ),
               _navItem(
@@ -950,6 +956,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 activeIcon: Icons.person,
                 label: 'Profile',
                 isActive: false,
+                isDark: isDark,
                 onTap: () => Navigator.pushNamed(context, '/profile'),
               ),
             ],
@@ -964,11 +971,17 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
     required IconData activeIcon,
     required String label,
     required bool isActive,
+    required bool isDark,
     Color? color,
     required VoidCallback onTap,
   }) {
     final itemColor =
-        color ?? (isActive ? const Color(0xFF3B82F6) : const Color(0xFF64748B));
+        color ??
+        (isActive
+            ? const Color(0xFF3B82F6)
+            : isDark
+            ? const Color(0xFF64748B)
+            : const Color(0xFF94A3B8));
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -999,7 +1012,8 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
 
 // Animated Background
 class AnimatedBackground extends StatefulWidget {
-  const AnimatedBackground({super.key});
+  final bool isDark;
+  const AnimatedBackground({super.key, required this.isDark});
   @override
   State<AnimatedBackground> createState() => _AnimatedBackgroundState();
 }
@@ -1028,7 +1042,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
       animation: _controller,
       builder: (context, child) => CustomPaint(
         size: Size.infinite,
-        painter: BackgroundPainter(_controller.value),
+        painter: BackgroundPainter(_controller.value, widget.isDark),
       ),
     );
   }
@@ -1036,7 +1050,8 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
 
 class BackgroundPainter extends CustomPainter {
   final double animationValue;
-  BackgroundPainter(this.animationValue);
+  final bool isDark;
+  BackgroundPainter(this.animationValue, this.isDark);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1044,10 +1059,12 @@ class BackgroundPainter extends CustomPainter {
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()
-        ..shader = const LinearGradient(
+        ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)],
+          colors: isDark
+              ? const [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)]
+              : const [Color(0xFFF8FAFC), Color(0xFFF5F3FF), Color(0xFFF8FAFC)],
         ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
     );
     final orbs = [
@@ -1086,7 +1103,8 @@ class BackgroundPainter extends CustomPainter {
       );
     }
     final gridPaint = Paint()
-      ..color = const Color(0xFF1E293B).withOpacity(0.3)
+      ..color = (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1))
+          .withOpacity(isDark ? 0.3 : 0.4)
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
     for (double i = 0; i < size.width; i += 40) {

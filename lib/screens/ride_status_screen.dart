@@ -70,7 +70,7 @@ class _RideStatusScreenState extends State<RideStatusScreen>
       body: Stack(
         children: [
           // Animated Background
-          const AnimatedBackground(),
+          AnimatedBackground(isDark: isDark),
 
           // Main Content
           SafeArea(
@@ -120,10 +120,12 @@ class _RideStatusScreenState extends State<RideStatusScreen>
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF0F172A),
+          color: isDark ? const Color(0xFF0F172A) : Colors.white,
           border: Border(
             top: BorderSide(
-              color: const Color(0xFF1E293B).withOpacity(0.5),
+              color: isDark
+                  ? const Color(0xFF1E293B).withOpacity(0.5)
+                  : const Color(0xFFE2E8F0),
               width: 1,
             ),
           ),
@@ -725,7 +727,8 @@ class _RideStatusScreenState extends State<RideStatusScreen>
 
 // Animated Background Component (same as other screens)
 class AnimatedBackground extends StatefulWidget {
-  const AnimatedBackground({super.key});
+  final bool isDark;
+  const AnimatedBackground({super.key, required this.isDark});
 
   @override
   State<AnimatedBackground> createState() => _AnimatedBackgroundState();
@@ -757,7 +760,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
       builder: (context, child) {
         return CustomPaint(
           size: Size.infinite,
-          painter: BackgroundPainter(_controller.value),
+          painter: BackgroundPainter(_controller.value, widget.isDark),
         );
       },
     );
@@ -766,18 +769,21 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
 
 class BackgroundPainter extends CustomPainter {
   final double animationValue;
+  final bool isDark;
 
-  BackgroundPainter(this.animationValue);
+  BackgroundPainter(this.animationValue, this.isDark);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;
 
     // Base gradient background
-    final gradient = const LinearGradient(
+    final gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)],
+      colors: isDark
+          ? const [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)]
+          : const [Color(0xFFF8FAFC), Color(0xFFEFF6FF), Color(0xFFF8FAFC)],
     );
 
     canvas.drawRect(
@@ -838,7 +844,8 @@ class BackgroundPainter extends CustomPainter {
 
     // Subtle grid pattern
     final gridPaint = Paint()
-      ..color = const Color(0xFF1E293B).withOpacity(0.3)
+      ..color = (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1))
+          .withOpacity(isDark ? 0.3 : 0.4)
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
 

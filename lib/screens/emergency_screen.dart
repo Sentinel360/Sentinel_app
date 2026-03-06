@@ -198,15 +198,22 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     );
   }
 
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _scaffoldBg => _isDark ? const Color(0xFF050A14) : const Color(0xFFF8FAFC);
+  Color get _surfaceBg => _isDark ? const Color(0xFF1E293B).withOpacity(0.6) : Colors.white.withOpacity(0.92);
+  Color get _surfaceBorder => _isDark ? const Color(0xFF334155).withOpacity(0.5) : const Color(0xFFE2E8F0);
+  Color get _textPrimary => _isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  Color get _textSecondary => _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050A14),
+      backgroundColor: _scaffoldBg,
       body: Stack(
         children: [
-          const AnimatedBackground(),
+          AnimatedBackground(isDark: _isDark),
           AnimatedBuilder(
             animation: _waveController,
             builder: (_, __) => CustomPaint(
@@ -268,15 +275,15 @@ class _EmergencyScreenState extends State<EmergencyScreen>
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: const Color(0xFF1E293B).withOpacity(0.6),
+                color: _surfaceBg,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFF334155).withOpacity(0.5),
+                  color: _surfaceBorder,
                 ),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.arrow_back_rounded,
-                color: Color(0xFFF1F5F9),
+                color: _textPrimary,
                 size: 20,
               ),
             ),
@@ -356,7 +363,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
           style: GoogleFonts.inter(
             fontSize: 26,
             fontWeight: FontWeight.w700,
-            color: const Color(0xFFF1F5F9),
+            color: _textPrimary,
             letterSpacing: -0.5,
           ),
           textAlign: TextAlign.center,
@@ -367,7 +374,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
           'Your GPS location will be sent automatically.',
           style: GoogleFonts.inter(
             fontSize: 14,
-            color: const Color(0xFF94A3B8),
+            color: _textSecondary,
             height: 1.6,
           ),
           textAlign: TextAlign.center,
@@ -396,12 +403,12 @@ class _EmergencyScreenState extends State<EmergencyScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            const Color(0xFF1E293B).withOpacity(0.6),
-            const Color(0xFF0F172A).withOpacity(0.4),
+            _isDark ? const Color(0xFF1E293B).withOpacity(0.6) : Colors.white,
+            _isDark ? const Color(0xFF0F172A).withOpacity(0.4) : const Color(0xFFF1F5F9),
           ],
         ),
         border: Border.all(
-          color: const Color(0xFF334155).withOpacity(0.5),
+          color: _surfaceBorder,
           width: 1,
         ),
       ),
@@ -434,14 +441,14 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                             style: GoogleFonts.inter(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: const Color(0xFFF1F5F9),
+                              color: _textPrimary,
                             ),
                           ),
                           Text(
                             item.$3,
                             style: GoogleFonts.inter(
                               fontSize: 11,
-                              color: const Color(0xFF64748B),
+                              color: _textSecondary,
                             ),
                           ),
                         ],
@@ -725,19 +732,19 @@ class _EmergencyScreenState extends State<EmergencyScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E293B).withOpacity(0.5),
+          color: _isDark ? const Color(0xFF1E293B).withOpacity(0.5) : Colors.white.withOpacity(0.95),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: const Color(0xFF334155).withOpacity(0.4),
+            color: _surfaceBorder,
             width: 1,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.touch_app_outlined,
-              color: Color(0xFF94A3B8),
+              color: _textSecondary,
               size: 16,
             ),
             const SizedBox(width: 8),
@@ -745,7 +752,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
               'Hold for 3 seconds to activate',
               style: GoogleFonts.inter(
                 fontSize: 13,
-                color: const Color(0xFF94A3B8),
+                color: _textSecondary,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -765,25 +772,25 @@ class _EmergencyScreenState extends State<EmergencyScreen>
         onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
         style: OutlinedButton.styleFrom(
           side: BorderSide(
-            color: const Color(0xFF334155).withOpacity(0.5),
+            color: _surfaceBorder,
             width: 1.5,
           ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          backgroundColor: const Color(0xFF1E293B).withOpacity(0.4),
+          backgroundColor: _isDark ? const Color(0xFF1E293B).withOpacity(0.4) : Colors.white,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.close_rounded, color: Color(0xFF94A3B8), size: 20),
+            Icon(Icons.close_rounded, color: _textSecondary, size: 20),
             const SizedBox(width: 8),
             Text(
               'Cancel',
               style: GoogleFonts.inter(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: const Color(0xFF94A3B8),
+                color: _textSecondary,
               ),
             ),
           ],
@@ -797,10 +804,10 @@ class _EmergencyScreenState extends State<EmergencyScreen>
   Widget _buildNavBar() {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
+        color: _isDark ? const Color(0xFF0F172A) : Colors.white,
         border: Border(
           top: BorderSide(
-            color: const Color(0xFF1E293B).withOpacity(0.5),
+            color: _isDark ? const Color(0xFF1E293B).withOpacity(0.5) : const Color(0xFFE2E8F0),
             width: 1,
           ),
         ),
@@ -862,8 +869,10 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     VoidCallback onTap, {
     Color? color,
   }) {
-    final c =
-        color ?? (isActive ? const Color(0xFF3B82F6) : const Color(0xFF64748B));
+    final c = color ??
+        (isActive
+            ? const Color(0xFF3B82F6)
+            : (_isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8)));
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -894,7 +903,8 @@ class _EmergencyScreenState extends State<EmergencyScreen>
 
 // ── Animated Background ───────────────────────────────────────────────────────
 class AnimatedBackground extends StatefulWidget {
-  const AnimatedBackground({super.key});
+  final bool isDark;
+  const AnimatedBackground({super.key, required this.isDark});
   @override
   State<AnimatedBackground> createState() => _AnimatedBackgroundState();
 }
@@ -919,13 +929,17 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: _c,
     builder: (_, __) =>
-        CustomPaint(size: Size.infinite, painter: BackgroundPainter(_c.value)),
+        CustomPaint(
+          size: Size.infinite,
+          painter: BackgroundPainter(_c.value, widget.isDark),
+        ),
   );
 }
 
 class BackgroundPainter extends CustomPainter {
   final double v;
-  BackgroundPainter(this.v);
+  final bool isDark;
+  BackgroundPainter(this.v, this.isDark);
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(
@@ -937,6 +951,17 @@ class BackgroundPainter extends CustomPainter {
           colors: [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)],
         ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
     );
+    if (!isDark) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFF8FAFC), Color(0xFFEFF6FF), Color(0xFFF8FAFC)],
+          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+      );
+    }
 
     final paint = Paint()..style = PaintingStyle.fill;
     final orbs = [
@@ -981,7 +1006,7 @@ class BackgroundPainter extends CustomPainter {
       );
     }
     final gp = Paint()
-      ..color = const Color(0xFF1E293B).withOpacity(0.3)
+      ..color = (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1)).withOpacity(0.3)
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
     for (double i = 0; i < size.width; i += 40)
@@ -991,7 +1016,7 @@ class BackgroundPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(BackgroundPainter o) => v != o.v;
+  bool shouldRepaint(BackgroundPainter o) => v != o.v || isDark != o.isDark;
 }
 
 class EmergencyWavePainter extends CustomPainter {

@@ -101,12 +101,13 @@ class _OrbPainter extends CustomPainter {
 // ──────────────────────────────────────────────────────────────────────────────
 class _GridPainter extends CustomPainter {
   final double opacity;
-  _GridPainter(this.opacity);
+  final Color lineColor;
+  _GridPainter(this.opacity, this.lineColor);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = _Palette.border.withOpacity(opacity)
+      ..color = lineColor.withOpacity(opacity)
       ..strokeWidth = 0.5;
 
     const step = 40.0;
@@ -154,6 +155,14 @@ class _LoginScreenState extends State<LoginScreen>
   final FocusNode _passwordFocus = FocusNode();
   bool _emailFocused = false;
   bool _passwordFocused = false;
+
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bg => _isDark ? const Color(0xFF050A14) : const Color(0xFFF8FAFC);
+  Color get _surface => _isDark ? const Color(0xFF0A1628) : Colors.white;
+  Color get _border => _isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+  Color get _textPrimary => _isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  Color get _textSecondary => _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+  Color get _textMuted => _isDark ? const Color(0xFF64748B) : const Color(0xFF64748B);
 
   @override
   void initState() {
@@ -322,7 +331,7 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _Palette.bg,
+      backgroundColor: _bg,
       body: Stack(
         children: [
           // Animated grid background
@@ -330,7 +339,10 @@ class _LoginScreenState extends State<LoginScreen>
             child: AnimatedBuilder(
               animation: _gridController,
               builder: (_, __) => CustomPaint(
-                painter: _GridPainter(0.03 + 0.04 * _gridController.value),
+                painter: _GridPainter(
+                  0.03 + 0.04 * _gridController.value,
+                  _isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1),
+                ),
               ),
             ),
           ),
@@ -406,9 +418,9 @@ class _LoginScreenState extends State<LoginScreen>
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: _Palette.surface,
+            color: _surface,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _Palette.border, width: 1),
+            border: Border.all(color: _border, width: 1),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.2),
@@ -419,7 +431,7 @@ class _LoginScreenState extends State<LoginScreen>
           ),
           child: const Icon(
             Icons.arrow_back_rounded,
-            color: _Palette.textSecondary,
+            color: Color(0xFF64748B),
             size: 20,
           ),
         ),
@@ -486,7 +498,7 @@ class _LoginScreenState extends State<LoginScreen>
           style: GoogleFonts.inter(
             fontSize: 32,
             fontWeight: FontWeight.w800,
-            color: _Palette.textPrimary,
+            color: _textPrimary,
             height: 1.2,
             letterSpacing: -0.8,
           ),
@@ -497,7 +509,7 @@ class _LoginScreenState extends State<LoginScreen>
           textAlign: TextAlign.center,
           style: GoogleFonts.inter(
             fontSize: 15,
-            color: _Palette.textMuted,
+            color: _textMuted,
             fontWeight: FontWeight.w400,
             height: 1.6,
             letterSpacing: 0.1,
@@ -526,7 +538,7 @@ class _LoginScreenState extends State<LoginScreen>
           style: GoogleFonts.inter(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: isFocused ? _Palette.primaryLight : _Palette.textSecondary,
+            color: isFocused ? _Palette.primaryLight : _textSecondary,
             letterSpacing: 0.5,
           ),
         ),
@@ -537,12 +549,12 @@ class _LoginScreenState extends State<LoginScreen>
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isFocused ? _Palette.primary : _Palette.border,
+              color: isFocused ? _Palette.primary : _border,
               width: isFocused ? 1.5 : 1,
             ),
             color: isFocused
                 ? _Palette.primary.withOpacity(0.05)
-                : _Palette.surface,
+                : _surface,
             boxShadow: isFocused
                 ? [
                     BoxShadow(
@@ -571,14 +583,14 @@ class _LoginScreenState extends State<LoginScreen>
             keyboardType: keyboardType,
             cursorColor: _Palette.primary,
             style: GoogleFonts.inter(
-              color: _Palette.textPrimary,
+              color: _textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w500,
             ),
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: GoogleFonts.inter(
-                color: _Palette.textMuted.withOpacity(0.5),
+                color: _textMuted.withOpacity(0.5),
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
               ),
@@ -587,7 +599,7 @@ class _LoginScreenState extends State<LoginScreen>
                 padding: const EdgeInsets.only(left: 14, right: 10),
                 child: Icon(
                   prefixIcon,
-                  color: isFocused ? _Palette.primary : _Palette.textMuted,
+                  color: isFocused ? _Palette.primary : _textMuted,
                   size: 20,
                 ),
               ),
@@ -655,7 +667,7 @@ class _LoginScreenState extends State<LoginScreen>
             showPassword
                 ? Icons.visibility_outlined
                 : Icons.visibility_off_outlined,
-            color: _Palette.textMuted,
+            color: _textMuted,
             size: 20,
           ),
         ),
@@ -758,7 +770,7 @@ class _LoginScreenState extends State<LoginScreen>
             height: 1,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Colors.transparent, _Palette.border],
+                colors: [Colors.transparent, _border],
               ),
             ),
           ),
@@ -768,14 +780,14 @@ class _LoginScreenState extends State<LoginScreen>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
-              color: _Palette.surface,
+              color: _surface,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _Palette.border, width: 1),
+              border: Border.all(color: _border, width: 1),
             ),
             child: Text(
               'OR',
               style: GoogleFonts.inter(
-                color: _Palette.textMuted,
+                color: _textMuted,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 1.5,
@@ -788,7 +800,7 @@ class _LoginScreenState extends State<LoginScreen>
             height: 1,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [_Palette.border, Colors.transparent],
+                colors: [_border, Colors.transparent],
               ),
             ),
           ),
@@ -804,11 +816,11 @@ class _LoginScreenState extends State<LoginScreen>
       child: OutlinedButton(
         onPressed: isGoogleLoading ? null : _googleSignIn,
         style: OutlinedButton.styleFrom(
-          side: BorderSide(color: _Palette.border, width: 1),
+          side: BorderSide(color: _border, width: 1),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          backgroundColor: _Palette.surface,
+          backgroundColor: _surface,
         ),
         child: isGoogleLoading
             ? SizedBox(
@@ -817,7 +829,7 @@ class _LoginScreenState extends State<LoginScreen>
                 child: CircularProgressIndicator(
                   strokeWidth: 2.5,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    _Palette.textSecondary,
+                    _textSecondary,
                   ),
                 ),
               )
@@ -830,15 +842,15 @@ class _LoginScreenState extends State<LoginScreen>
                     height: 22,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: _Palette.border, width: 1),
+                      border: Border.all(color: _border, width: 1),
                     ),
-                    child: const Center(
+                    child: Center(
                       child: Text(
                         'G',
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: _Palette.textPrimary,
+                          color: _textPrimary,
                         ),
                       ),
                     ),
@@ -847,7 +859,7 @@ class _LoginScreenState extends State<LoginScreen>
                   Text(
                     'Continue with Google',
                     style: GoogleFonts.inter(
-                      color: _Palette.textPrimary,
+                      color: _textPrimary,
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
                       letterSpacing: 0.1,
@@ -866,7 +878,7 @@ class _LoginScreenState extends State<LoginScreen>
         Text(
           "Don't have an account? ",
           style: GoogleFonts.inter(
-            color: _Palette.textMuted,
+            color: _textMuted,
             fontSize: 14,
             fontWeight: FontWeight.w400,
             letterSpacing: 0.1,

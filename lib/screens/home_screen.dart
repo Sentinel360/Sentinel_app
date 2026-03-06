@@ -33,6 +33,14 @@ class _HomeScreenState extends State<HomeScreen>
   String _firstName = 'there';
   String _initials = '?';
 
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bg => _isDark ? const Color(0xFF050A14) : const Color(0xFFF8FAFC);
+  Color get _surface => _isDark ? const Color(0xFF0F172A) : Colors.white;
+  Color get _border => _isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+  Color get _textPrimary => _isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  Color get _textSecondary => _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+  Color get _textMuted => _isDark ? const Color(0xFF64748B) : const Color(0xFF64748B);
+
   @override
   void initState() {
     super.initState();
@@ -113,14 +121,19 @@ class _HomeScreenState extends State<HomeScreen>
         : 'N/A';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF050A14),
+      backgroundColor: _bg,
       body: Stack(
         children: [
-          const AnimatedBackground(),
+          AnimatedBackground(isDark: _isDark),
           SafeArea(
             child: _isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(color: Color(0xFF2563EB)),
+                ? Center(
+                    child: CircularProgressIndicator(
+                      color: const Color(0xFF2563EB),
+                      backgroundColor: _isDark
+                          ? const Color(0xFF1E293B)
+                          : const Color(0xFFE2E8F0),
+                    ),
                   )
                 : SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
@@ -145,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen>
                                         style: GoogleFonts.inter(
                                           fontSize: 32,
                                           fontWeight: FontWeight.w700,
-                                          color: const Color(0xFFF1F5F9),
+                                          color: _textPrimary,
                                           letterSpacing: -0.5,
                                         ),
                                       ),
@@ -154,7 +167,7 @@ class _HomeScreenState extends State<HomeScreen>
                                         style: GoogleFonts.inter(
                                           fontSize: 32,
                                           fontWeight: FontWeight.w700,
-                                          color: const Color(0xFFF1F5F9),
+                                          color: _textPrimary,
                                           letterSpacing: -0.5,
                                         ),
                                       ),
@@ -251,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 margin: const EdgeInsets.only(bottom: 16),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(16),
-                                  color: const Color(0xFF0F172A),
+                                  color: _surface,
                                   border: Border.all(
                                     color: const Color(0xFFF59E0B),
                                     width: 1.5,
@@ -270,7 +283,7 @@ class _HomeScreenState extends State<HomeScreen>
                                         style: GoogleFonts.inter(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w500,
-                                          color: Colors.white,
+                                          color: _textPrimary,
                                         ),
                                       ),
                                     ),
@@ -350,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen>
                                             Text(
                                               "Sentinel 360",
                                               style: GoogleFonts.inter(
-                                                color: const Color(0xFF94A3B8),
+                                                color: _textSecondary,
                                                 fontSize: 13,
                                                 fontWeight: FontWeight.w500,
                                                 letterSpacing: 0.3,
@@ -400,9 +413,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                       fontSize: 18,
                                                       fontWeight:
                                                           FontWeight.w700,
-                                                      color: const Color(
-                                                        0xFFF1F5F9,
-                                                      ),
+                                                      color: _textPrimary,
                                                     ),
                                                   ),
                                                   const SizedBox(height: 6),
@@ -457,10 +468,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                         style:
                                                             GoogleFonts.inter(
                                                               fontSize: 12,
-                                                              color:
-                                                                  const Color(
-                                                                    0xFF64748B,
-                                                                  ),
+                                                              color: _textMuted,
                                                             ),
                                                       ),
                                                     ],
@@ -488,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 style: GoogleFonts.inter(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w700,
-                                  color: const Color(0xFFF1F5F9),
+                                          color: _textPrimary,
                                   letterSpacing: -0.3,
                                 ),
                               ),
@@ -525,7 +533,7 @@ class _HomeScreenState extends State<HomeScreen>
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(20),
                                     border: Border.all(
-                                      color: const Color(0xFF1E293B),
+                                      color: _border,
                                       width: 1,
                                     ),
                                   ),
@@ -533,14 +541,14 @@ class _HomeScreenState extends State<HomeScreen>
                                     children: [
                                       const Icon(
                                         Icons.route_outlined,
-                                        color: Color(0xFF334155),
+                                        color: Color(0xFF64748B),
                                         size: 40,
                                       ),
                                       const SizedBox(height: 12),
                                       Text(
                                         'No trips yet',
                                         style: GoogleFonts.inter(
-                                          color: const Color(0xFF64748B),
+                                          color: _textMuted,
                                           fontSize: 14,
                                           fontWeight: FontWeight.w500,
                                         ),
@@ -582,26 +590,28 @@ class _HomeScreenState extends State<HomeScreen>
                                               end: Alignment.bottomRight,
                                               colors: isFirst
                                                   ? [
-                                                      const Color(
-                                                        0xFF1E293B,
-                                                      ).withOpacity(0.6),
-                                                      const Color(
-                                                        0xFF0F172A,
-                                                      ).withOpacity(0.4),
+                                                      (_isDark
+                                                              ? const Color(0xFF1E293B)
+                                                              : Colors.white)
+                                                          .withOpacity(_isDark ? 0.6 : 0.95),
+                                                      (_isDark
+                                                              ? const Color(0xFF0F172A)
+                                                              : const Color(0xFFF1F5F9))
+                                                          .withOpacity(_isDark ? 0.4 : 0.9),
                                                     ]
                                                   : [
-                                                      const Color(
-                                                        0xFF1E293B,
-                                                      ).withOpacity(0.4),
-                                                      const Color(
-                                                        0xFF0F172A,
-                                                      ).withOpacity(0.3),
+                                                      (_isDark
+                                                              ? const Color(0xFF1E293B)
+                                                              : Colors.white)
+                                                          .withOpacity(_isDark ? 0.4 : 0.9),
+                                                      (_isDark
+                                                              ? const Color(0xFF0F172A)
+                                                              : const Color(0xFFF8FAFC))
+                                                          .withOpacity(_isDark ? 0.3 : 0.85),
                                                     ],
                                             ),
                                             border: Border.all(
-                                              color: const Color(
-                                                0xFF334155,
-                                              ).withOpacity(0.5),
+                                              color: _border.withOpacity(0.7),
                                               width: 1,
                                             ),
                                           ),
@@ -638,9 +648,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                         fontSize: 14,
                                                         fontWeight:
                                                             FontWeight.w600,
-                                                        color: const Color(
-                                                          0xFFF1F5F9,
-                                                        ),
+                                                        color: _textPrimary,
                                                       ),
                                                       maxLines: 1,
                                                       overflow:
@@ -667,9 +675,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                         const Color(
                                                           0xFF3B82F6,
                                                         ).withOpacity(0.5),
-                                                        const Color(
-                                                          0xFF64748B,
-                                                        ).withOpacity(0.3),
+                                                        _textMuted.withOpacity(0.3),
                                                       ],
                                                     ),
                                                   ),
@@ -702,9 +708,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                         fontSize: 14,
                                                         fontWeight:
                                                             FontWeight.w600,
-                                                        color: const Color(
-                                                          0xFFF1F5F9,
-                                                        ),
+                                                        color: _textPrimary,
                                                       ),
                                                       maxLines: 1,
                                                       overflow:
@@ -788,7 +792,7 @@ class _HomeScreenState extends State<HomeScreen>
                             style: GoogleFonts.inter(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
-                              color: const Color(0xFFF1F5F9),
+                              color: _textPrimary,
                               letterSpacing: -0.3,
                             ),
                           ),
@@ -825,10 +829,10 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF0F172A),
+          color: _surface,
           border: Border(
             top: BorderSide(
-              color: const Color(0xFF1E293B).withOpacity(0.5),
+              color: _border.withOpacity(0.7),
               width: 1,
             ),
           ),
@@ -887,14 +891,14 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _tripStat(IconData icon, String value) {
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFF64748B), size: 14),
+        Icon(icon, color: _textMuted, size: 14),
         const SizedBox(width: 6),
         Text(
           value,
           style: GoogleFonts.inter(
             fontSize: 13,
             fontWeight: FontWeight.w500,
-            color: const Color(0xFF94A3B8),
+            color: _textSecondary,
           ),
         ),
       ],
@@ -928,7 +932,7 @@ class _HomeScreenState extends State<HomeScreen>
             style: GoogleFonts.inter(
               fontSize: 28,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFFF1F5F9),
+              color: _textPrimary,
             ),
           ),
           const SizedBox(height: 4),
@@ -937,7 +941,7 @@ class _HomeScreenState extends State<HomeScreen>
             style: GoogleFonts.inter(
               fontSize: 13,
               fontWeight: FontWeight.w500,
-              color: const Color(0xFF64748B),
+              color: _textMuted,
             ),
           ),
         ],
@@ -954,7 +958,7 @@ class _HomeScreenState extends State<HomeScreen>
     required VoidCallback onTap,
   }) {
     final itemColor =
-        color ?? (isActive ? const Color(0xFF3B82F6) : const Color(0xFF64748B));
+        color ?? (isActive ? const Color(0xFF3B82F6) : _textMuted);
 
     return GestureDetector(
       onTap: onTap,
@@ -985,7 +989,8 @@ class _HomeScreenState extends State<HomeScreen>
 }
 
 class AnimatedBackground extends StatefulWidget {
-  const AnimatedBackground({super.key});
+  final bool isDark;
+  const AnimatedBackground({super.key, required this.isDark});
 
   @override
   State<AnimatedBackground> createState() => _AnimatedBackgroundState();
@@ -1017,7 +1022,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
       builder: (context, child) {
         return CustomPaint(
           size: Size.infinite,
-          painter: BackgroundPainter(_controller.value),
+          painter: BackgroundPainter(_controller.value, widget.isDark),
         );
       },
     );
@@ -1026,15 +1031,18 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
 
 class BackgroundPainter extends CustomPainter {
   final double animationValue;
-  BackgroundPainter(this.animationValue);
+  final bool isDark;
+  BackgroundPainter(this.animationValue, this.isDark);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;
-    final gradient = const LinearGradient(
+    final gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)],
+      colors: isDark
+          ? const [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)]
+          : const [Color(0xFFF8FAFC), Color(0xFFEFF6FF), Color(0xFFF8FAFC)],
     );
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
@@ -1087,7 +1095,8 @@ class BackgroundPainter extends CustomPainter {
       );
     }
     final gridPaint = Paint()
-      ..color = const Color(0xFF1E293B).withOpacity(0.3)
+      ..color = (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1))
+          .withOpacity(isDark ? 0.3 : 0.4)
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
     const gridSpacing = 40.0;

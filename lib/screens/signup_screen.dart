@@ -26,6 +26,15 @@ class _SignupScreenState extends State<SignupScreen>
   late AnimationController _fadeController;
   late AnimationController _glowController;
 
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bg => _isDark ? const Color(0xFF050A14) : const Color(0xFFF8FAFC);
+  Color get _surface => _isDark ? const Color(0xFF1E293B) : Colors.white;
+  Color get _surfaceAlt => _isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9);
+  Color get _border => _isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  Color get _textPrimary => _isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  Color get _textSecondary => _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+  Color get _textMuted => _isDark ? const Color(0xFF64748B) : const Color(0xFF64748B);
+
   @override
   void initState() {
     super.initState();
@@ -146,11 +155,11 @@ class _SignupScreenState extends State<SignupScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050A14),
+      backgroundColor: _bg,
       body: Stack(
         children: [
           // Animated Background
-          const AnimatedBackground(),
+          AnimatedBackground(isDark: _isDark),
 
           // Main Content
           SafeArea(
@@ -179,18 +188,16 @@ class _SignupScreenState extends State<SignupScreen>
                               width: 44,
                               height: 44,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF1E293B).withOpacity(0.6),
+                                color: _surface.withOpacity(_isDark ? 0.6 : 0.9),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
-                                  color: const Color(
-                                    0xFF334155,
-                                  ).withOpacity(0.5),
+                                  color: _border.withOpacity(0.7),
                                   width: 1,
                                 ),
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.arrow_back_rounded,
-                                color: Color(0xFFF1F5F9),
+                                color: _textPrimary,
                                 size: 20,
                               ),
                             ),
@@ -201,10 +208,10 @@ class _SignupScreenState extends State<SignupScreen>
                               vertical: 8,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1E293B).withOpacity(0.6),
+                              color: _surface.withOpacity(_isDark ? 0.6 : 0.9),
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
-                                color: const Color(0xFF334155).withOpacity(0.5),
+                                color: _border.withOpacity(0.7),
                                 width: 1,
                               ),
                             ),
@@ -234,7 +241,7 @@ class _SignupScreenState extends State<SignupScreen>
                                 Text(
                                   "Sentinel 360",
                                   style: GoogleFonts.inter(
-                                    color: const Color(0xFFF1F5F9),
+                                    color: _textPrimary,
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -256,7 +263,7 @@ class _SignupScreenState extends State<SignupScreen>
                         style: GoogleFonts.inter(
                           fontSize: 32,
                           fontWeight: FontWeight.w700,
-                          color: const Color(0xFFF1F5F9),
+                          color: _textPrimary,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -268,7 +275,7 @@ class _SignupScreenState extends State<SignupScreen>
                         'Join Sentinel 360 to start monitoring\nyour trips with AI-powered safety',
                         style: GoogleFonts.inter(
                           fontSize: 15,
-                          color: const Color(0xFF94A3B8),
+                          color: _textSecondary,
                           height: 1.5,
                         ),
                       ),
@@ -300,12 +307,12 @@ class _SignupScreenState extends State<SignupScreen>
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                                 colors: [
-                                  const Color(0xFF1E293B).withOpacity(0.8),
-                                  const Color(0xFF0F172A).withOpacity(0.6),
+                                  _surface.withOpacity(_isDark ? 0.8 : 0.96),
+                                  _surfaceAlt.withOpacity(_isDark ? 0.6 : 0.98),
                                 ],
                               ),
                               border: Border.all(
-                                color: const Color(0xFF334155).withOpacity(0.5),
+                                color: _border.withOpacity(0.7),
                                 width: 1.5,
                               ),
                             ),
@@ -422,7 +429,7 @@ class _SignupScreenState extends State<SignupScreen>
                       children: [
                         Expanded(
                           child: Divider(
-                            color: const Color(0xFF334155).withOpacity(0.5),
+                            color: _border.withOpacity(0.6),
                             thickness: 1,
                           ),
                         ),
@@ -431,7 +438,7 @@ class _SignupScreenState extends State<SignupScreen>
                           child: Text(
                             'OR CONTINUE WITH',
                             style: GoogleFonts.inter(
-                              color: const Color(0xFF64748B),
+                              color: _textMuted,
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
                               letterSpacing: 0.5,
@@ -440,7 +447,7 @@ class _SignupScreenState extends State<SignupScreen>
                         ),
                         Expanded(
                           child: Divider(
-                            color: const Color(0xFF334155).withOpacity(0.5),
+                            color: _border.withOpacity(0.6),
                             thickness: 1,
                           ),
                         ),
@@ -456,15 +463,13 @@ class _SignupScreenState extends State<SignupScreen>
                         onPressed: isGoogleLoading ? null : _googleSignIn,
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(
-                            color: const Color(0xFF334155).withOpacity(0.5),
+                            color: _border.withOpacity(0.7),
                             width: 1.5,
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          backgroundColor: const Color(
-                            0xFF1E293B,
-                          ).withOpacity(0.4),
+                          backgroundColor: _surface.withOpacity(_isDark ? 0.4 : 0.75),
                         ),
                         child: isGoogleLoading
                             ? const SizedBox(
@@ -486,7 +491,7 @@ class _SignupScreenState extends State<SignupScreen>
                                     ),
                                     child: const Icon(
                                       Icons.g_translate,
-                                      color: Color(0xFF1E293B),
+                                      color: Color(0xFF0F172A),
                                       size: 18,
                                     ),
                                   ),
@@ -494,7 +499,7 @@ class _SignupScreenState extends State<SignupScreen>
                                   Text(
                                     'Continue with Google',
                                     style: GoogleFonts.inter(
-                                      color: const Color(0xFFF1F5F9),
+                                      color: _textPrimary,
                                       fontWeight: FontWeight.w600,
                                       fontSize: 15,
                                     ),
@@ -513,7 +518,7 @@ class _SignupScreenState extends State<SignupScreen>
                           Text(
                             "Already have an account? ",
                             style: GoogleFonts.inter(
-                              color: const Color(0xFF94A3B8),
+                              color: _textSecondary,
                               fontSize: 14,
                             ),
                           ),
@@ -560,16 +565,16 @@ class _SignupScreenState extends State<SignupScreen>
           style: GoogleFonts.inter(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: const Color(0xFFF1F5F9),
+            color: _textPrimary,
           ),
         ),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF0F172A).withOpacity(0.6),
+            color: _surfaceAlt.withOpacity(_isDark ? 0.6 : 0.95),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: const Color(0xFF334155).withOpacity(0.3),
+              color: _border.withOpacity(0.45),
               width: 1,
             ),
           ),
@@ -577,13 +582,13 @@ class _SignupScreenState extends State<SignupScreen>
             controller: controller,
             keyboardType: keyboardType,
             style: GoogleFonts.inter(
-              color: const Color(0xFFF1F5F9),
+              color: _textPrimary,
               fontSize: 14,
             ),
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: GoogleFonts.inter(
-                color: const Color(0xFF64748B),
+                color: _textMuted,
                 fontSize: 14,
               ),
               prefixIcon: Container(
@@ -622,16 +627,16 @@ class _SignupScreenState extends State<SignupScreen>
           style: GoogleFonts.inter(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: const Color(0xFFF1F5F9),
+            color: _textPrimary,
           ),
         ),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF0F172A).withOpacity(0.6),
+            color: _surfaceAlt.withOpacity(_isDark ? 0.6 : 0.95),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: const Color(0xFF334155).withOpacity(0.3),
+              color: _border.withOpacity(0.45),
               width: 1,
             ),
           ),
@@ -639,13 +644,13 @@ class _SignupScreenState extends State<SignupScreen>
             controller: controller,
             obscureText: !showPassword,
             style: GoogleFonts.inter(
-              color: const Color(0xFFF1F5F9),
+              color: _textPrimary,
               fontSize: 14,
             ),
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: GoogleFonts.inter(
-                color: const Color(0xFF64748B),
+                color: _textMuted,
                 fontSize: 14,
               ),
               prefixIcon: Container(
@@ -667,7 +672,7 @@ class _SignupScreenState extends State<SignupScreen>
                   showPassword
                       ? Icons.visibility_outlined
                       : Icons.visibility_off_outlined,
-                  color: const Color(0xFF64748B),
+                  color: _textMuted,
                   size: 20,
                 ),
               ),
@@ -686,7 +691,8 @@ class _SignupScreenState extends State<SignupScreen>
 
 // Animated Background Component
 class AnimatedBackground extends StatefulWidget {
-  const AnimatedBackground({super.key});
+  final bool isDark;
+  const AnimatedBackground({super.key, required this.isDark});
 
   @override
   State<AnimatedBackground> createState() => _AnimatedBackgroundState();
@@ -718,7 +724,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
       builder: (context, child) {
         return CustomPaint(
           size: Size.infinite,
-          painter: BackgroundPainter(_controller.value),
+          painter: BackgroundPainter(_controller.value, widget.isDark),
         );
       },
     );
@@ -727,17 +733,20 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
 
 class BackgroundPainter extends CustomPainter {
   final double animationValue;
+  final bool isDark;
 
-  BackgroundPainter(this.animationValue);
+  BackgroundPainter(this.animationValue, this.isDark);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;
 
-    final gradient = const LinearGradient(
+    final gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)],
+      colors: isDark
+          ? const [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)]
+          : const [Color(0xFFF8FAFC), Color(0xFFEFF6FF), Color(0xFFF8FAFC)],
     );
 
     canvas.drawRect(
@@ -796,7 +805,8 @@ class BackgroundPainter extends CustomPainter {
     }
 
     final gridPaint = Paint()
-      ..color = const Color(0xFF1E293B).withOpacity(0.3)
+      ..color = (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1))
+          .withOpacity(isDark ? 0.3 : 0.4)
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
 

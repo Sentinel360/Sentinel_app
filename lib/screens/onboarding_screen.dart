@@ -79,12 +79,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textPrimary = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final textSecondary = isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+    final chipBg = isDark ? const Color(0xFF1E293B).withOpacity(0.5) : Colors.white.withOpacity(0.9);
+    final chipBorder = isDark ? const Color(0xFF334155).withOpacity(0.5) : const Color(0xFFE2E8F0);
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050A14),
+      backgroundColor: isDark ? const Color(0xFF050A14) : const Color(0xFFF8FAFC),
       body: Stack(
         children: [
           // Animated Background
-          const AnimatedBackground(),
+          AnimatedBackground(isDark: isDark),
 
           // Main Content
           SafeArea(
@@ -122,7 +128,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                           Text(
                             "Sentinel 360",
                             style: GoogleFonts.inter(
-                              color: const Color(0xFFF1F5F9),
+                              color: textPrimary,
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                               letterSpacing: 0.3,
@@ -140,17 +146,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                             vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1E293B).withOpacity(0.5),
+                            color: chipBg,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: const Color(0xFF334155).withOpacity(0.5),
+                              color: chipBorder,
                               width: 1,
                             ),
                           ),
                           child: Text(
                             "Skip",
                             style: GoogleFonts.inter(
-                              color: const Color(0xFF94A3B8),
+                              color: textSecondary,
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
                             ),
@@ -178,6 +184,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       glowAnimation: _glowController,
                       pageIndex: index,
                       currentPage: currentPage,
+                      isDark: isDark,
                     ),
                   ),
                 ),
@@ -198,7 +205,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       Text(
                         "${currentPage + 1} of ${onboardingData.length}",
                         style: GoogleFonts.inter(
-                          color: const Color(0xFF64748B),
+                          color: textSecondary,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           letterSpacing: 0.5,
@@ -297,6 +304,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Widget buildDot({required int index}) {
     bool isActive = currentPage == index;
     bool isNext = currentPage + 1 == index;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 400),
@@ -312,8 +320,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         color: isActive
             ? onboardingData[currentPage]['color'] as Color
             : isNext
-            ? const Color(0xFF334155)
-            : const Color(0xFF1E293B),
+            ? (isDark ? const Color(0xFF334155) : const Color(0xFF94A3B8))
+            : (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1)),
         borderRadius: BorderRadius.circular(12),
         boxShadow: isActive
             ? [
@@ -340,6 +348,7 @@ class OnboardingPage extends StatelessWidget {
   final Animation<double> glowAnimation;
   final int pageIndex;
   final int currentPage;
+  final bool isDark;
 
   const OnboardingPage({
     super.key,
@@ -352,6 +361,7 @@ class OnboardingPage extends StatelessWidget {
     required this.glowAnimation,
     required this.pageIndex,
     required this.currentPage,
+    required this.isDark,
   });
 
   @override
@@ -445,7 +455,7 @@ class OnboardingPage extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.inter(
-                  color: const Color(0xFFF1F5F9),
+                  color: isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A),
                   fontSize: 30,
                   fontWeight: FontWeight.w700,
                   height: 1.2,
@@ -464,7 +474,7 @@ class OnboardingPage extends StatelessWidget {
                 description,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.inter(
-                  color: const Color(0xFF94A3B8),
+                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
                   fontSize: 16,
                   fontWeight: FontWeight.w400,
                   height: 1.6,
@@ -482,7 +492,8 @@ class OnboardingPage extends StatelessWidget {
 
 // Animated Background Component
 class AnimatedBackground extends StatefulWidget {
-  const AnimatedBackground({super.key});
+  final bool isDark;
+  const AnimatedBackground({super.key, required this.isDark});
 
   @override
   State<AnimatedBackground> createState() => _AnimatedBackgroundState();
@@ -514,7 +525,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
       builder: (context, child) {
         return CustomPaint(
           size: Size.infinite,
-          painter: BackgroundPainter(_controller.value),
+          painter: BackgroundPainter(_controller.value, widget.isDark),
         );
       },
     );
@@ -523,8 +534,9 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
 
 class BackgroundPainter extends CustomPainter {
   final double animationValue;
+  final bool isDark;
 
-  BackgroundPainter(this.animationValue);
+  BackgroundPainter(this.animationValue, this.isDark);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -534,11 +546,9 @@ class BackgroundPainter extends CustomPainter {
     final gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [
-        const Color(0xFF050A14),
-        const Color(0xFF0A1628),
-        const Color(0xFF050A14),
-      ],
+      colors: isDark
+          ? const [Color(0xFF050A14), Color(0xFF0A1628), Color(0xFF050A14)]
+          : const [Color(0xFFF8FAFC), Color(0xFFEFF6FF), Color(0xFFF8FAFC)],
     );
 
     canvas.drawRect(
@@ -599,7 +609,8 @@ class BackgroundPainter extends CustomPainter {
 
     // Subtle grid pattern
     final gridPaint = Paint()
-      ..color = const Color(0xFF1E293B).withOpacity(0.3)
+      ..color = (isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1))
+          .withOpacity(isDark ? 0.3 : 0.4)
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
 
