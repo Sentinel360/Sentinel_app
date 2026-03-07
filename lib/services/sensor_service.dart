@@ -53,14 +53,20 @@ class RiskUpdate {
   final double riskScore;
   final String riskLevel; // "SAFE" | "MEDIUM" | "HIGH RISK"
   final String riskColor; // "green" | "orange" | "red"
+  final String overallRiskLevel; // Trip-level trend verdict
+  final bool overallUnsafe; // Trip-level unsafe latch
   final String explanation;
+  final String policyReason;
   final ActiveSensor activeSensor;
 
   RiskUpdate({
     required this.riskScore,
     required this.riskLevel,
     required this.riskColor,
+    required this.overallRiskLevel,
+    required this.overallUnsafe,
     required this.explanation,
+    required this.policyReason,
     required this.activeSensor,
   });
 
@@ -68,7 +74,10 @@ class RiskUpdate {
     riskScore: 0.0,
     riskLevel: 'SAFE',
     riskColor: 'green',
+    overallRiskLevel: 'SAFE',
+    overallUnsafe: false,
     explanation: 'Monitoring active',
+    policyReason: '',
     activeSensor: ActiveSensor.phone,
   );
 }
@@ -267,19 +276,61 @@ class SensorService {
         .listen((snapshot) {
           if (!snapshot.exists) return;
           final data = snapshot.data()!;
+          final riskLevel =
+              (data['riskLevel'] as String?) ??
+              (data['risk_level'] as String?) ??
+              'SAFE';
+          final riskColor =
+              (data['riskColor'] as String?) ??
+              (data['risk_color'] as String?) ??
+              _riskColorFromLevel(riskLevel);
+          final activeSensorRaw =
+              (data['activeSensor'] as String?) ??
+              (data['active_sensor'] as String?) ??
+              'PHONE';
+          final overallRiskLevel =
+              (data['overallRiskLevel'] as String?) ??
+              (data['overall_risk_level'] as String?) ??
+              riskLevel;
+          final overallUnsafe =
+              (data['overallUnsafe'] as bool?) ??
+              (data['overall_unsafe'] as bool?) ??
+              false;
+          final policy = data['policy'];
+          final policyReason = policy is Map<String, dynamic>
+              ? (policy['reason'] as String? ?? '')
+              : '';
 
           _riskController.add(
             RiskUpdate(
-              riskScore: (data['risk_score'] as num?)?.toDouble() ?? 0.0,
-              riskLevel: data['risk_level'] as String? ?? 'SAFE',
-              riskColor: data['risk_color'] as String? ?? 'green',
+              riskScore:
+                  (data['riskScore'] as num?)?.toDouble() ??
+                  (data['risk_score'] as num?)?.toDouble() ??
+                  0.0,
+              riskLevel: riskLevel,
+              riskColor: riskColor,
+              overallRiskLevel: overallRiskLevel,
+              overallUnsafe: overallUnsafe,
               explanation: data['explanation'] as String? ?? '',
-              activeSensor: (data['active_sensor'] as String?) == 'IOT'
+              policyReason: policyReason,
+              activeSensor: activeSensorRaw.toUpperCase() == 'IOT'
                   ? ActiveSensor.iot
                   : ActiveSensor.phone,
             ),
           );
         }, onError: (e) => print('[SensorService] Risk listener error: $e'));
+  }
+
+  String _riskColorFromLevel(String level) {
+    switch (level.toUpperCase()) {
+      case 'HIGH':
+      case 'HIGH RISK':
+        return 'red';
+      case 'MEDIUM':
+        return 'orange';
+      default:
+        return 'green';
+    }
   }
 
   // ── Location permission ────────────────────────────────────────────────────

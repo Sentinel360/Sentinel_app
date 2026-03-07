@@ -26,7 +26,8 @@ Color _riskToColor(String? riskColor) {
   }
 }
 
-bool _isHighRisk(String? riskLevel) => riskLevel == 'HIGH RISK';
+bool _isHighRisk(String? riskLevel) =>
+    riskLevel == 'HIGH RISK' || riskLevel == 'HIGH';
 
 const LatLng _kAccraCenter = LatLng(5.6037, -0.1870);
 
@@ -611,6 +612,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // ── Active header ─────────────────────────────────────────────────────────
 
   Widget _buildActiveHeader(bool isDark, RiskUpdate? risk, Color rc) {
+    final instantLevel = risk?.riskLevel ?? 'SAFE';
+    final overallUnsafe = risk?.overallUnsafe == true;
+    final headerLevel = overallUnsafe
+        ? '${risk?.overallRiskLevel ?? instantLevel} (Trip Unsafe)'
+        : instantLevel;
     return Positioned(
       top: 0,
       left: 0,
@@ -635,7 +641,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             AnimatedBuilder(
               animation: _pulseAnim,
               builder: (_, __) => Transform.scale(
-                scale: _isHighRisk(risk?.riskLevel) ? _pulseAnim.value : 1.0,
+                scale: (_isHighRisk(risk?.riskLevel) || overallUnsafe)
+                    ? _pulseAnim.value
+                    : 1.0,
                 child: Container(
                   width: 12,
                   height: 12,
@@ -659,7 +667,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    risk?.riskLevel ?? 'SAFE',
+                    headerLevel,
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -1059,6 +1067,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   ) {
     final elapsed = _tripState?.elapsed ?? Duration.zero;
     final riskLevel = risk?.riskLevel ?? 'SAFE';
+    final overallRiskLevel = risk?.overallRiskLevel ?? riskLevel;
+    final overallUnsafe = risk?.overallUnsafe ?? false;
     final riskScore = risk?.riskScore ?? 0.0;
 
     return Padding(
@@ -1118,6 +1128,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                      if (risk?.policyReason.isNotEmpty == true)
+                        Text(
+                          risk!.policyReason,
+                          style: GoogleFonts.inter(fontSize: 11, color: ts),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
                   ),
                 ),
@@ -1152,7 +1169,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               Expanded(
                 child: _statChip(
                   icon: Icons.shield_outlined,
-                  value: riskLevel,
+                  value: overallUnsafe
+                      ? '$overallRiskLevel (UNSAFE)'
+                      : overallRiskLevel,
                   label: 'Status',
                   isDark: isDark,
                   tp: tp,

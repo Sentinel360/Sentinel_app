@@ -102,6 +102,22 @@ class TripManager {
       final tripId = tripRef.id;
       debugPrint('TripManager: Created trip $tripId');
 
+      // Initialize the new current-state document path used by the app listener:
+      // trips/{tripId}/current_state/latest
+      await _db
+          .collection('trips')
+          .doc(tripId)
+          .collection('current_state')
+          .doc('latest')
+          .set({
+            'riskScore': 0.0,
+            'riskLevel': 'SAFE',
+            'riskColor': 'green',
+            'explanation': 'Trip just started',
+            'activeSensor': 'PHONE',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
       // Connect BLE — non-blocking, trip proceeds even without IoT
       _bleService.connect().then((connected) {
         if (connected) {
