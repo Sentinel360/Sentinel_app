@@ -39,10 +39,12 @@ class TripModel {
       userId: data['userId'] ?? '',
       deviceId: data['deviceId'] ?? '',
 
-      // FIX 1: startLocation may be null in older/partial trip documents
-      startLocation: data['startLocation'] is GeoPoint
-          ? data['startLocation'] as GeoPoint
-          : const GeoPoint(5.6037, -0.1870), // fallback: Accra center
+      // FIX 1: startLocation can come from different schemas.
+      startLocation: _readGeoPoint(
+        data['startLocation'] ??
+            data['originGeo'] ??
+            data['origin'],
+      ),
       // FIX 2: endLocation — safe nullable cast
       endLocation: data['endLocation'] is GeoPoint
           ? data['endLocation'] as GeoPoint
@@ -88,6 +90,17 @@ class TripModel {
           ? escalationRaw.toInt()
           : 0,
     );
+  }
+
+  static GeoPoint _readGeoPoint(dynamic value) {
+    if (value is GeoPoint) return value;
+    if (value is Map) {
+      final lat = (value['lat'] ?? value['latitude'] ?? 5.6037) as num;
+      final lon = (value['lon'] ?? value['lng'] ?? value['longitude'] ?? -0.1870)
+          as num;
+      return GeoPoint(lat.toDouble(), lon.toDouble());
+    }
+    return const GeoPoint(5.6037, -0.1870);
   }
 
   Map<String, dynamic> toMap() {
