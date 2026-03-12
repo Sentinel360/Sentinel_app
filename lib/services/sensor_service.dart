@@ -11,8 +11,8 @@ import 'package:battery_plus/battery_plus.dart';
 class SensorConfig {
   static const bool capstoneMode = true;
   static const int collectionIntervalSec = 1;
-  static const int transmissionIntervalSec = 3;
-  static const int batchSize = 3;
+  static const int transmissionIntervalSec = 1;
+  static const int batchSize = 1;
   static const int phoneLowBatteryThreshold = 15;
   static const int phoneResumeThreshold = 40;
   static const int dataBufferMaxSize = 20;
@@ -28,24 +28,59 @@ class SensorDataPoint {
   final double lat;
   final double lon;
   final double speedKmh;
+  final double gpsAccuracyMeters;
+  final double speedAccuracyKmh;
+  final double altitudeMeters;
+  final double verticalSpeedMps;
+  final double heading;
+  final double bearing;
   final double accelX;
   final double accelY;
   final double accelZ;
+  final double gyroX;
+  final double gyroY;
+  final double gyroZ;
+  final bool isMoving;
+  final String activity;
 
   SensorDataPoint({
     required this.timestamp,
     required this.lat,
     required this.lon,
     required this.speedKmh,
+    required this.gpsAccuracyMeters,
+    required this.speedAccuracyKmh,
+    required this.altitudeMeters,
+    required this.verticalSpeedMps,
+    required this.heading,
+    required this.bearing,
     required this.accelX,
     required this.accelY,
     required this.accelZ,
+    required this.gyroX,
+    required this.gyroY,
+    required this.gyroZ,
+    required this.isMoving,
+    required this.activity,
   });
 
   Map<String, dynamic> toMap() => {
     'timestamp': timestamp,
-    'gps': {'lat': lat, 'lon': lon, 'speed': speedKmh},
+    'gps': {
+      'lat': lat,
+      'lon': lon,
+      'speed': speedKmh,
+      'accuracy': gpsAccuracyMeters,
+      'speed_accuracy': speedAccuracyKmh,
+      'heading': heading,
+      'bearing': bearing,
+      'altitude': altitudeMeters,
+      'vertical_speed': verticalSpeedMps,
+    },
     'acceleration': {'x': accelX, 'y': accelY, 'z': accelZ},
+    'gyro': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
+    'is_moving': isMoving,
+    'activity': activity,
   };
 }
 
@@ -53,14 +88,20 @@ class RiskUpdate {
   final double riskScore;
   final String riskLevel; // "SAFE" | "MEDIUM" | "HIGH RISK"
   final String riskColor; // "green" | "orange" | "red"
+  final String overallRiskLevel; // Trip-level trend verdict
+  final bool overallUnsafe; // Trip-level unsafe latch
   final String explanation;
+  final String policyReason;
   final ActiveSensor activeSensor;
 
   RiskUpdate({
     required this.riskScore,
     required this.riskLevel,
     required this.riskColor,
+    required this.overallRiskLevel,
+    required this.overallUnsafe,
     required this.explanation,
+    required this.policyReason,
     required this.activeSensor,
   });
 
@@ -68,7 +109,10 @@ class RiskUpdate {
     riskScore: 0.0,
     riskLevel: 'SAFE',
     riskColor: 'green',
+    overallRiskLevel: 'SAFE',
+    overallUnsafe: false,
     explanation: 'Monitoring active',
+    policyReason: '',
     activeSensor: ActiveSensor.phone,
   );
 }
@@ -90,10 +134,14 @@ class SensorService {
 
   final List<SensorDataPoint> _buffer = [];
   double _accelX = 0, _accelY = 0, _accelZ = 0;
+  double _gyroX = 0, _gyroY = 0, _gyroZ = 0;
+  double? _lastAltitudeMeters;
+  int? _lastAltitudeTimestampMs;
 
   Timer? _collectionTimer;
   Timer? _transmissionTimer;
   StreamSubscription? _accelSubscription;
+  StreamSubscription? _gyroSubscription;
   StreamSubscription? _batterySubscription;
   StreamSubscription? _riskSubscription;
 
@@ -114,9 +162,12 @@ class SensorService {
     _isRunning = true;
     _activeSensor = ActiveSensor.phone;
     _buffer.clear();
+    _lastAltitudeMeters = null;
+    _lastAltitudeTimestampMs = null;
 
     await _ensureLocationPermission();
     _startAccelerometer();
+    _startGyroscope();
 
     _collectionTimer = Timer.periodic(
       const Duration(seconds: SensorConfig.collectionIntervalSec),
@@ -140,6 +191,7 @@ class SensorService {
     _collectionTimer?.cancel();
     _transmissionTimer?.cancel();
     _accelSubscription?.cancel();
+    _gyroSubscription?.cancel();
     _batterySubscription?.cancel();
     _riskSubscription?.cancel();
     _buffer.clear();
@@ -162,9 +214,23 @@ class SensorService {
         lat: position.latitude,
         lon: position.longitude,
         speedKmh: (position.speed * 3.6).clamp(0, 300),
+        gpsAccuracyMeters: position.accuracy,
+        speedAccuracyKmh: (position.speedAccuracy * 3.6).abs(),
+        altitudeMeters: position.altitude,
+        verticalSpeedMps: _computeVerticalSpeed(
+          altitudeMeters: position.altitude,
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+        heading: position.heading,
+        bearing: position.heading,
         accelX: _accelX,
         accelY: _accelY,
         accelZ: _accelZ,
+        gyroX: _gyroX,
+        gyroY: _gyroY,
+        gyroZ: _gyroZ,
+        isMoving: (position.speed * 3.6) > 2.0,
+        activity: (position.speed * 3.6) > 2.0 ? 'in_vehicle' : 'still',
       );
 
       _buffer.add(point);
@@ -176,27 +242,29 @@ class SensorService {
     }
   }
 
-  // ── Send batch to Firestore ────────────────────────────────────────────────
+  // ── Send sensor events to Firestore ────────────────────────────────────────
   Future<void> _transmitBatch() async {
     if (!_isRunning || _currentTripId == null) return;
     if (_buffer.isEmpty || _activeSensor != ActiveSensor.phone) return;
 
-    final batchData = _buffer
-        .take(SensorConfig.batchSize)
-        .map((p) => p.toMap())
-        .toList();
+    final events = _buffer.take(SensorConfig.batchSize).toList();
 
     try {
-      await _db
-          .collection('trips')
-          .doc(_currentTripId)
-          .collection('sensor_data')
-          .add({
-            'source': 'PHONE',
-            'batch': batchData,
-            'timestamp': FieldValue.serverTimestamp(),
-            'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
-          });
+      final tripId = _currentTripId!;
+      for (final event in events) {
+        await _db
+            .collection('trips')
+            .doc(tripId)
+            .collection('sensor_data')
+            .add({
+              'trip_id': tripId,
+              ...event.toMap(),
+              'source': 'PHONE',
+              'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
+              'ingested_at': FieldValue.serverTimestamp(),
+            });
+      }
+      _buffer.removeRange(0, events.length);
     } catch (e) {
       print('[SensorService] Transmit error: $e');
     }
@@ -212,6 +280,34 @@ class SensorService {
           _accelY = event.y;
           _accelZ = event.z;
         });
+  }
+
+  void _startGyroscope() {
+    _gyroSubscription =
+        gyroscopeEventStream(
+          samplingPeriod: const Duration(milliseconds: 200),
+        ).listen((event) {
+          _gyroX = event.x;
+          _gyroY = event.y;
+          _gyroZ = event.z;
+        });
+  }
+
+  double _computeVerticalSpeed({
+    required double altitudeMeters,
+    required int timestampMs,
+  }) {
+    if (_lastAltitudeMeters == null || _lastAltitudeTimestampMs == null) {
+      _lastAltitudeMeters = altitudeMeters;
+      _lastAltitudeTimestampMs = timestampMs;
+      return 0.0;
+    }
+    final dtSec = (timestampMs - _lastAltitudeTimestampMs!) / 1000.0;
+    if (dtSec <= 0) return 0.0;
+    final vs = (altitudeMeters - _lastAltitudeMeters!) / dtSec;
+    _lastAltitudeMeters = altitudeMeters;
+    _lastAltitudeTimestampMs = timestampMs;
+    return vs;
   }
 
   // ── Battery monitor ────────────────────────────────────────────────────────
@@ -267,19 +363,61 @@ class SensorService {
         .listen((snapshot) {
           if (!snapshot.exists) return;
           final data = snapshot.data()!;
+          final riskLevel =
+              (data['riskLevel'] as String?) ??
+              (data['risk_level'] as String?) ??
+              'SAFE';
+          final riskColor =
+              (data['riskColor'] as String?) ??
+              (data['risk_color'] as String?) ??
+              _riskColorFromLevel(riskLevel);
+          final activeSensorRaw =
+              (data['activeSensor'] as String?) ??
+              (data['active_sensor'] as String?) ??
+              'PHONE';
+          final overallRiskLevel =
+              (data['overallRiskLevel'] as String?) ??
+              (data['overall_risk_level'] as String?) ??
+              riskLevel;
+          final overallUnsafe =
+              (data['overallUnsafe'] as bool?) ??
+              (data['overall_unsafe'] as bool?) ??
+              false;
+          final policy = data['policy'];
+          final policyReason = policy is Map<String, dynamic>
+              ? (policy['reason'] as String? ?? '')
+              : '';
 
           _riskController.add(
             RiskUpdate(
-              riskScore: (data['risk_score'] as num?)?.toDouble() ?? 0.0,
-              riskLevel: data['risk_level'] as String? ?? 'SAFE',
-              riskColor: data['risk_color'] as String? ?? 'green',
+              riskScore:
+                  (data['riskScore'] as num?)?.toDouble() ??
+                  (data['risk_score'] as num?)?.toDouble() ??
+                  0.0,
+              riskLevel: riskLevel,
+              riskColor: riskColor,
+              overallRiskLevel: overallRiskLevel,
+              overallUnsafe: overallUnsafe,
               explanation: data['explanation'] as String? ?? '',
-              activeSensor: (data['active_sensor'] as String?) == 'IOT'
+              policyReason: policyReason,
+              activeSensor: activeSensorRaw.toUpperCase() == 'IOT'
                   ? ActiveSensor.iot
                   : ActiveSensor.phone,
             ),
           );
         }, onError: (e) => print('[SensorService] Risk listener error: $e'));
+  }
+
+  String _riskColorFromLevel(String level) {
+    switch (level.toUpperCase()) {
+      case 'HIGH':
+      case 'HIGH RISK':
+        return 'red';
+      case 'MEDIUM':
+        return 'orange';
+      default:
+        return 'green';
+    }
   }
 
   // ── Location permission ────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -26,7 +27,8 @@ Color _riskToColor(String? riskColor) {
   }
 }
 
-bool _isHighRisk(String? riskLevel) => riskLevel == 'HIGH RISK';
+bool _isHighRisk(String? riskLevel) =>
+    riskLevel == 'HIGH RISK' || riskLevel == 'HIGH';
 
 const LatLng _kAccraCenter = LatLng(5.6037, -0.1870);
 
@@ -79,6 +81,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _locationLoading = true;
   bool _hasLocationPermission = false;
   StreamSubscription<Position>? _locationSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _tripDocSub;
+  DateTime? _lastFollowAt;
 
   ActiveTripState? _tripState;
   StreamSubscription<ActiveTripState>? _tripSub;
@@ -114,9 +118,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _panelController.forward();
 
     _tripSub = TripManager().stateStream.listen((s) {
-      if (mounted) setState(() => _tripState = s);
+      if (!mounted) return;
+      setState(() => _tripState = s);
+      _syncUiWithTripState(s);
     });
     _tripState = TripManager().currentState;
+    _syncUiWithTripState(_tripState);
 
     _initLocation();
   }
@@ -181,6 +188,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ).listen((Position p) {
             if (mounted) {
               setState(() => _userLocation = LatLng(p.latitude, p.longitude));
+              final now = DateTime.now();
+              if (_screen == _MapPhase.active &&
+                  (_lastFollowAt == null ||
+                      now.difference(_lastFollowAt!).inMilliseconds > 1500)) {
+                _lastFollowAt = now;
+                _mapController?.animateCamera(
+                  CameraUpdate.newLatLng(_userLocation!),
+                );
+              }
             }
           });
     } catch (e) {
@@ -201,9 +217,158 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _panelController.dispose();
     _pulseController.dispose();
     _tripSub?.cancel();
+    _tripDocSub?.cancel();
     _locationSub?.cancel();
     _debounce?.cancel();
     super.dispose();
+  }
+
+  void _syncUiWithTripState(ActiveTripState? state) {
+    if (!mounted || state == null) return;
+
+    if (state.phase == TripPhase.active && state.tripId != null) {
+      if (_screen != _MapPhase.active) {
+        setState(() => _screen = _MapPhase.active);
+      }
+      _bindTripDocument(state.tripId!);
+      return;
+    }
+
+    if (state.phase == TripPhase.idle) {
+      _tripDocSub?.cancel();
+      _tripDocSub = null;
+      if (_screen == _MapPhase.active) {
+        setState(() {
+          _screen = _MapPhase.search;
+          _destName = null;
+          _destLatLng = null;
+          _markers = {};
+          _polylines = {};
+          _searchController.clear();
+        });
+      }
+    }
+  }
+
+  void _bindTripDocument(String tripId) {
+    _tripDocSub?.cancel();
+    _tripDocSub = FirebaseFirestore.instance
+        .collection('trips')
+        .doc(tripId)
+        .snapshots()
+        .listen((doc) {
+          if (!mounted || !doc.exists) return;
+          final data = doc.data() ?? {};
+          _restoreTripUiFromDoc(data);
+        });
+  }
+
+  void _restoreTripUiFromDoc(Map<String, dynamic> data) {
+    final destinationName = data['destinationName'] as String? ?? _destName;
+    final destination = _toLatLng(data['destination']) ?? _toLatLng(data['destinationGeo']);
+    final origin = _toLatLng(data['origin']) ?? _toLatLng(data['originGeo']) ?? _origin;
+    final savedRoutePoints = _toLatLngList(data['routePolyline']);
+
+    final expectedRoute = data['expected_route'];
+    final encoded = expectedRoute is Map ? expectedRoute['polyline'] as String? : null;
+    final expectedPoints = savedRoutePoints.isNotEmpty
+        ? savedRoutePoints
+        : (encoded != null && encoded.isNotEmpty)
+        ? _decodePolyline(encoded)
+        : <LatLng>[origin, if (destination != null) destination];
+
+    final nextMarkers = <Marker>{
+      Marker(
+        markerId: const MarkerId('origin'),
+        position: origin,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        infoWindow: const InfoWindow(title: 'Trip start'),
+      ),
+    };
+    if (destination != null) {
+      nextMarkers.add(
+        Marker(
+          markerId: const MarkerId('dest'),
+          position: destination,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+          infoWindow: InfoWindow(title: destinationName ?? 'Destination'),
+        ),
+      );
+    }
+
+    setState(() {
+      _destName = destinationName;
+      _destLatLng = destination;
+      _screen = _MapPhase.active;
+      _markers = nextMarkers;
+      if (expectedPoints.length >= 2) {
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId('route'),
+            points: expectedPoints,
+            color: const Color(0xFF3B82F6),
+            width: 5,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        };
+      }
+    });
+  }
+
+  LatLng? _toLatLng(dynamic raw) {
+    if (raw is GeoPoint) return LatLng(raw.latitude, raw.longitude);
+    if (raw is Map) {
+      final lat = (raw['lat'] ?? raw['latitude']) as num?;
+      final lon = (raw['lon'] ?? raw['lng'] ?? raw['longitude']) as num?;
+      if (lat != null && lon != null) {
+        return LatLng(lat.toDouble(), lon.toDouble());
+      }
+    }
+    return null;
+  }
+
+  List<LatLng> _toLatLngList(dynamic raw) {
+    if (raw is! List) return const <LatLng>[];
+    final pts = <LatLng>[];
+    for (final item in raw) {
+      final p = _toLatLng(item);
+      if (p != null) pts.add(p);
+    }
+    return pts;
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    final points = <LatLng>[];
+    int index = 0;
+    int lat = 0;
+    int lng = 0;
+    while (index < encoded.length) {
+      int b;
+      int shift = 0;
+      int result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      final dlat = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      final dlng = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      lng += dlng;
+
+      points.add(LatLng(lat / 1e5, lng / 1e5));
+    }
+    return points;
   }
 
   // ── Places Autocomplete ───────────────────────────────────────────────────
@@ -434,6 +599,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       destinationName: _destName!,
     );
     if (id != null && mounted) {
+      final previewPoints = _polylines.isNotEmpty ? _polylines.first.points : <LatLng>[];
+      if (previewPoints.length >= 2) {
+        await FirebaseFirestore.instance.collection('trips').doc(id).set({
+          'routePolyline': previewPoints
+              .map((p) => {'lat': p.latitude, 'lon': p.longitude})
+              .toList(),
+        }, SetOptions(merge: true));
+      }
       setState(() => _screen = _MapPhase.active);
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -611,6 +784,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // ── Active header ─────────────────────────────────────────────────────────
 
   Widget _buildActiveHeader(bool isDark, RiskUpdate? risk, Color rc) {
+    final instantLevel = risk?.riskLevel ?? 'SAFE';
+    final overallUnsafe = risk?.overallUnsafe == true;
+    final headerLevel = overallUnsafe
+        ? '${risk?.overallRiskLevel ?? instantLevel} (Trip Unsafe)'
+        : instantLevel;
     return Positioned(
       top: 0,
       left: 0,
@@ -635,7 +813,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             AnimatedBuilder(
               animation: _pulseAnim,
               builder: (_, __) => Transform.scale(
-                scale: _isHighRisk(risk?.riskLevel) ? _pulseAnim.value : 1.0,
+                scale: (_isHighRisk(risk?.riskLevel) || overallUnsafe)
+                    ? _pulseAnim.value
+                    : 1.0,
                 child: Container(
                   width: 12,
                   height: 12,
@@ -659,7 +839,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    risk?.riskLevel ?? 'SAFE',
+                    headerLevel,
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -1059,6 +1239,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   ) {
     final elapsed = _tripState?.elapsed ?? Duration.zero;
     final riskLevel = risk?.riskLevel ?? 'SAFE';
+    final overallRiskLevel = risk?.overallRiskLevel ?? riskLevel;
+    final overallUnsafe = risk?.overallUnsafe ?? false;
     final riskScore = risk?.riskScore ?? 0.0;
 
     return Padding(
@@ -1118,6 +1300,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                      if (risk?.policyReason.isNotEmpty == true)
+                        Text(
+                          risk!.policyReason,
+                          style: GoogleFonts.inter(fontSize: 11, color: ts),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
                   ),
                 ),
@@ -1152,7 +1341,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               Expanded(
                 child: _statChip(
                   icon: Icons.shield_outlined,
-                  value: riskLevel,
+                  value: overallUnsafe
+                      ? '$overallRiskLevel (UNSAFE)'
+                      : overallRiskLevel,
                   label: 'Status',
                   isDark: isDark,
                   tp: tp,

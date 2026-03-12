@@ -83,9 +83,15 @@ class TripManager {
 
       final tripRef = await _db.collection('trips').add({
         'userId': uid,
+        'driver_id': uid,
+        'vehicle_type': 'unknown',
         'status': 'active',
-        'origin': GeoPoint(originLat, originLon),
-        'destination': GeoPoint(destLat, destLon),
+        // Object format expected by cloud route-monitor bootstrap.
+        'origin': {'lat': originLat, 'lon': originLon},
+        'destination': {'lat': destLat, 'lon': destLon},
+        // Keep GeoPoint copies for compatibility with existing readers/tools.
+        'originGeo': GeoPoint(originLat, originLon),
+        'destinationGeo': GeoPoint(destLat, destLon),
         'destinationName': destinationName,
         'startedAt': FieldValue.serverTimestamp(),
         'source': 'PHONE',
@@ -101,6 +107,22 @@ class TripManager {
 
       final tripId = tripRef.id;
       debugPrint('TripManager: Created trip $tripId');
+
+      // Initialize the new current-state document path used by the app listener:
+      // trips/{tripId}/current_state/latest
+      await _db
+          .collection('trips')
+          .doc(tripId)
+          .collection('current_state')
+          .doc('latest')
+          .set({
+            'riskScore': 0.0,
+            'riskLevel': 'SAFE',
+            'riskColor': 'green',
+            'explanation': 'Trip just started',
+            'activeSensor': 'PHONE',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
 
       // Connect BLE — non-blocking, trip proceeds even without IoT
       _bleService.connect().then((connected) {
@@ -207,6 +229,22 @@ class TripManager {
         'status': 'triggered',
       });
     }
+  }
+
+  Stream<Map<String, dynamic>?> escalationStream(String tripId) {
+    return _db.collection("trip_escalations").doc(tripId).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return doc.data();
+    });
+  }
+
+  Future<void> respondToSafetyCheck({required bool isOk}) async {
+    final tripId = _state.tripId;
+    if (tripId == null) return;
+    await _db.collection("trip_escalations").doc(tripId).set({
+      "userResponse": isOk ? "OK" : "NOT_OK",
+      "respondedAt": FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   void _updateState(ActiveTripState s) {
