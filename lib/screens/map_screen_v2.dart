@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -26,7 +27,8 @@ Color _riskToColor(String? riskColor) {
   }
 }
 
-bool _isHighRisk(String? riskLevel) => riskLevel == 'HIGH RISK';
+bool _isHighRisk(String? riskLevel) =>
+    riskLevel == 'HIGH RISK' || riskLevel == 'HIGH';
 
 const LatLng _kAccraCenter = LatLng(5.6037, -0.1870);
 
@@ -55,6 +57,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final RouteService _routeService = RouteService();
   GoogleMapController? _mapController;
+  bool _mapReady = false;
   late AnimationController _panelController;
   late AnimationController _pulseController;
   late Animation<Offset> _panelSlide;
@@ -79,6 +82,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _locationLoading = true;
   bool _hasLocationPermission = false;
   StreamSubscription<Position>? _locationSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _tripDocSub;
+  DateTime? _lastFollowAt;
+
+  // Rerouting state
+  bool _isRerouting = false;
+  DateTime? _lastRerouteAt;
+  /// The decoded route points used for deviation checks.
+  List<LatLng> _currentRoutePoints = [];
+  static const double _rerouteThresholdMeters = 100.0;
+  static const Duration _rerouteCooldown = Duration(seconds: 30);
 
   ActiveTripState? _tripState;
   StreamSubscription<ActiveTripState>? _tripSub;
@@ -114,9 +127,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _panelController.forward();
 
     _tripSub = TripManager().stateStream.listen((s) {
-      if (mounted) setState(() => _tripState = s);
+      if (!mounted) return;
+      setState(() => _tripState = s);
+      _syncUiWithTripState(s);
     });
     _tripState = TripManager().currentState;
+    _syncUiWithTripState(_tripState);
 
     _initLocation();
   }
@@ -180,7 +196,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ).listen((Position p) {
             if (mounted) {
-              setState(() => _userLocation = LatLng(p.latitude, p.longitude));
+              final newPos = LatLng(p.latitude, p.longitude);
+              setState(() => _userLocation = newPos);
+              final now = DateTime.now();
+              if (_screen == _MapPhase.active) {
+                // Follow camera like Google Maps navigation
+                if (_lastFollowAt == null ||
+                    now.difference(_lastFollowAt!).inMilliseconds > 1500) {
+                  _lastFollowAt = now;
+                  _mapController?.animateCamera(
+                    CameraUpdate.newLatLng(newPos),
+                  );
+                }
+                // Check for route deviation and reroute if needed
+                _checkDeviationAndReroute(newPos);
+              }
             }
           });
     } catch (e) {
@@ -194,6 +224,149 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
+  // ── Rerouting logic ──────────────────────────────────────────────────────
+
+  /// Check if the user has deviated from the expected route.
+  /// If so, fetch a new route from their current position to the destination
+  /// and update the displayed polyline.
+  void _checkDeviationAndReroute(LatLng userPos) {
+    // Only reroute during active trips with a known destination
+    if (_screen != _MapPhase.active || _destLatLng == null) return;
+    // Need a route to compare against
+    if (_currentRoutePoints.length < 2) return;
+    // Cooldown: don't re-request within 30 seconds of the last reroute
+    if (_lastRerouteAt != null &&
+        DateTime.now().difference(_lastRerouteAt!) < _rerouteCooldown) {
+      return;
+    }
+    // Don't stack concurrent reroute calls
+    if (_isRerouting) return;
+
+    // Check if user is within the corridor of the current route.
+    // We find the minimum distance from the user's position to any segment
+    // of the polyline, not just to discrete points (more accurate).
+    final double minDist = _minDistanceToPolyline(userPos, _currentRoutePoints);
+
+    if (minDist <= _rerouteThresholdMeters) return; // still on route
+
+    debugPrint(
+      'MapScreen: route deviation detected — ${minDist.toStringAsFixed(0)}m '
+      'from route. Rerouting from current position to $_destName...',
+    );
+
+    _performReroute(userPos);
+  }
+
+  /// Compute the minimum distance (meters) from [point] to the polyline
+  /// defined by [polyline]. Checks each segment, not just vertices, so short
+  /// segments don't create blind spots.
+  double _minDistanceToPolyline(LatLng point, List<LatLng> polyline) {
+    double best = double.infinity;
+    for (int i = 0; i < polyline.length - 1; i++) {
+      final d = _distToSegment(point, polyline[i], polyline[i + 1]);
+      if (d < best) best = d;
+      if (best < 10) return best; // close enough, no need to keep checking
+    }
+    // Also check the raw vertex distance for the last point
+    final dLast = Geolocator.distanceBetween(
+      point.latitude, point.longitude,
+      polyline.last.latitude, polyline.last.longitude,
+    );
+    if (dLast < best) best = dLast;
+    return best;
+  }
+
+  /// Distance (meters) from [p] to the closest point on segment [a]→[b].
+  /// Uses a flat-earth projection that is accurate enough at city scale.
+  double _distToSegment(LatLng p, LatLng a, LatLng b) {
+    // Convert to a local flat coordinate system (meters from 'a')
+    final double cosLat = math.cos(a.latitude * math.pi / 180);
+    double ax = 0, ay = 0;
+    double bx = (b.longitude - a.longitude) * 111320 * cosLat;
+    double by = (b.latitude - a.latitude) * 110540;
+    double px = (p.longitude - a.longitude) * 111320 * cosLat;
+    double py = (p.latitude - a.latitude) * 110540;
+
+    final double dx = bx - ax;
+    final double dy = by - ay;
+    final double lenSq = dx * dx + dy * dy;
+
+    double t = 0;
+    if (lenSq > 0) {
+      t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+      t = t.clamp(0.0, 1.0);
+    }
+
+    final double projX = ax + t * dx;
+    final double projY = ay + t * dy;
+    final double ex = px - projX;
+    final double ey = py - projY;
+    return math.sqrt(ex * ex + ey * ey);
+  }
+
+  Future<void> _performReroute(LatLng from) async {
+    setState(() => _isRerouting = true);
+
+    try {
+      final routePoints = await _routeService.fetchRoute(
+        startLat: from.latitude,
+        startLng: from.longitude,
+        endLat: _destLatLng!.latitude,
+        endLng: _destLatLng!.longitude,
+      );
+
+      if (!mounted) return;
+
+      final pts = routePoints
+          .map((gp) => LatLng(gp.latitude, gp.longitude))
+          .toList();
+
+      if (pts.length >= 2) {
+        setState(() {
+          _currentRoutePoints = pts;
+          _polylines = {
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: pts,
+              color: _polylines.isNotEmpty
+                  ? _polylines.first.color
+                  : const Color(0xFF3B82F6),
+              width: 5,
+              jointType: JointType.round,
+              startCap: Cap.roundCap,
+              endCap: Cap.roundCap,
+            ),
+          };
+        });
+
+        // Also update the origin marker to the user's current position
+        final existingDest = _markers
+            .where((m) => m.markerId.value == 'dest')
+            .toList();
+        setState(() {
+          _markers = {
+            Marker(
+              markerId: const MarkerId('origin'),
+              position: from,
+              icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueBlue,
+              ),
+              infoWindow: const InfoWindow(title: 'Current position'),
+            ),
+            ...existingDest,
+          };
+        });
+      }
+
+      _lastRerouteAt = DateTime.now();
+      debugPrint('MapScreen: reroute complete — ${pts.length} points');
+    } catch (e) {
+      debugPrint('MapScreen: reroute failed — $e');
+    } finally {
+      if (mounted) setState(() => _isRerouting = false);
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -201,9 +374,170 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _panelController.dispose();
     _pulseController.dispose();
     _tripSub?.cancel();
+    _tripDocSub?.cancel();
     _locationSub?.cancel();
     _debounce?.cancel();
     super.dispose();
+  }
+
+  void _syncUiWithTripState(ActiveTripState? state) {
+    if (!mounted || state == null) return;
+
+    if (state.phase == TripPhase.active && state.tripId != null) {
+      if (_screen != _MapPhase.active) {
+        setState(() => _screen = _MapPhase.active);
+      }
+      _bindTripDocument(state.tripId!);
+      return;
+    }
+
+    if (state.phase == TripPhase.idle) {
+      _tripDocSub?.cancel();
+      _tripDocSub = null;
+      if (_screen == _MapPhase.active) {
+        setState(() {
+          _screen = _MapPhase.search;
+          _destName = null;
+          _destLatLng = null;
+          _markers = {};
+          _polylines = {};
+          _currentRoutePoints = [];
+          _isRerouting = false;
+          _lastRerouteAt = null;
+          _searchController.clear();
+        });
+      }
+    }
+  }
+
+  void _bindTripDocument(String tripId) {
+    _tripDocSub?.cancel();
+    _tripDocSub = FirebaseFirestore.instance
+        .collection('trips')
+        .doc(tripId)
+        .snapshots()
+        .listen((doc) {
+          if (!mounted || !doc.exists) return;
+          final data = doc.data() ?? {};
+          _restoreTripUiFromDoc(data);
+        });
+  }
+
+  void _restoreTripUiFromDoc(Map<String, dynamic> data) {
+    final destinationName = data['destinationName'] as String? ?? _destName;
+    final destination = _toLatLng(data['destination']) ?? _toLatLng(data['destinationGeo']);
+    final origin = _toLatLng(data['origin']) ?? _toLatLng(data['originGeo']) ?? _origin;
+    final savedRoutePoints = _toLatLngList(data['routePolyline']);
+
+    final expectedRoute = data['expected_route'];
+    final encoded = expectedRoute is Map ? expectedRoute['polyline'] as String? : null;
+    var expectedPoints = savedRoutePoints.isNotEmpty
+        ? savedRoutePoints
+        : (encoded != null && encoded.isNotEmpty)
+            ? _decodePolyline(encoded)
+            : <LatLng>[origin, if (destination != null) destination];
+
+    // Avoid replacing a full preview route with a 2-point straight line when a
+    // snapshot arrives before routePolyline or expected_route is populated.
+    if (expectedPoints.length <= 2 &&
+        _polylines.isNotEmpty &&
+        _polylines.first.points.length > 2) {
+      expectedPoints = List<LatLng>.from(_polylines.first.points);
+    }
+
+    final nextMarkers = <Marker>{
+      Marker(
+        markerId: const MarkerId('origin'),
+        position: origin,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        infoWindow: const InfoWindow(title: 'Trip start'),
+      ),
+    };
+    if (destination != null) {
+      nextMarkers.add(
+        Marker(
+          markerId: const MarkerId('dest'),
+          position: destination,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+          infoWindow: InfoWindow(title: destinationName ?? 'Destination'),
+        ),
+      );
+    }
+
+    setState(() {
+      _destName = destinationName;
+      _destLatLng = destination;
+      _screen = _MapPhase.active;
+      _markers = nextMarkers;
+      if (expectedPoints.length >= 2) {
+        _currentRoutePoints = expectedPoints;
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId('route'),
+            points: expectedPoints,
+            color: const Color(0xFF3B82F6),
+            width: 5,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        };
+      }
+    });
+  }
+
+  LatLng? _toLatLng(dynamic raw) {
+    if (raw is GeoPoint) return LatLng(raw.latitude, raw.longitude);
+    if (raw is Map) {
+      final lat = (raw['lat'] ?? raw['latitude']) as num?;
+      final lon = (raw['lon'] ?? raw['lng'] ?? raw['longitude']) as num?;
+      if (lat != null && lon != null) {
+        return LatLng(lat.toDouble(), lon.toDouble());
+      }
+    }
+    return null;
+  }
+
+  List<LatLng> _toLatLngList(dynamic raw) {
+    if (raw is! List) return const <LatLng>[];
+    final pts = <LatLng>[];
+    for (final item in raw) {
+      final p = _toLatLng(item);
+      if (p != null) pts.add(p);
+    }
+    return pts;
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    final points = <LatLng>[];
+    int index = 0;
+    int lat = 0;
+    int lng = 0;
+    while (index < encoded.length) {
+      int b;
+      int shift = 0;
+      int result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      final dlat = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      final dlng = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      lng += dlng;
+
+      points.add(LatLng(lat / 1e5, lng / 1e5));
+    }
+    return points;
   }
 
   // ── Places Autocomplete ───────────────────────────────────────────────────
@@ -365,6 +699,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           .toList();
 
       setState(() {
+        _currentRoutePoints = pts;
         _polylines = {
           Polyline(
             polylineId: const PolylineId('route'),
@@ -426,12 +761,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> _startTrip() async {
     if (_destLatLng == null || _destName == null) return;
+    final previewPoints = _polylines.isNotEmpty ? _polylines.first.points : <LatLng>[];
+    final routePolylinePreview = previewPoints.length >= 2
+        ? previewPoints
+                .map((p) => {'lat': p.latitude, 'lon': p.longitude})
+                .toList()
+        : null;
+
     final String? id = await TripManager().startTrip(
       originLat: _origin.latitude,
       originLon: _origin.longitude,
       destLat: _destLatLng!.latitude,
       destLon: _destLatLng!.longitude,
       destinationName: _destName!,
+      routePolylinePreview: routePolylinePreview,
     );
     if (id != null && mounted) {
       setState(() => _screen = _MapPhase.active);
@@ -451,6 +794,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _destLatLng = null;
         _markers = {};
         _polylines = {};
+        _currentRoutePoints = [];
+        _isRerouting = false;
+        _lastRerouteAt = null;
         _searchController.clear();
       });
     }
@@ -510,13 +856,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               zoom: 13,
             ),
             style: isDark ? _kDarkMapStyle : null,
+            markerType: GoogleMapMarkerType.marker,
+            liteModeEnabled: false,
             onMapCreated: (c) {
               _mapController = c;
+              setState(() => _mapReady = true);
               if (_userLocation != null) {
                 c.animateCamera(CameraUpdate.newLatLngZoom(_userLocation!, 15));
               }
             },
-            markers: _markers,
+            // Avoid sending non-empty "initial markers" to the platform view
+            // before it's fully initialized.
+            markers: _mapReady ? _markers : const <Marker>{},
             polylines: _polylines,
             myLocationEnabled: _hasLocationPermission,
             myLocationButtonEnabled: false,
@@ -589,6 +940,56 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ),
 
+          // Rerouting indicator
+          if (_isRerouting)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 60,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFFF59E0B),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Rerouting...',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? const Color(0xFFF59E0B)
+                              : const Color(0xFFD97706),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
           if (_screen == _MapPhase.active) _buildActiveHeader(isDark, risk, rc),
 
           if (_screen != _MapPhase.search) _buildSensorBadge(isDark),
@@ -611,6 +1012,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // ── Active header ─────────────────────────────────────────────────────────
 
   Widget _buildActiveHeader(bool isDark, RiskUpdate? risk, Color rc) {
+    final instantLevel = risk?.riskLevel ?? 'SAFE';
+    final overallUnsafe = risk?.overallUnsafe == true;
+    final headerLevel = overallUnsafe
+        ? '${risk?.overallRiskLevel ?? instantLevel} (Trip Unsafe)'
+        : instantLevel;
     return Positioned(
       top: 0,
       left: 0,
@@ -635,7 +1041,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             AnimatedBuilder(
               animation: _pulseAnim,
               builder: (_, __) => Transform.scale(
-                scale: _isHighRisk(risk?.riskLevel) ? _pulseAnim.value : 1.0,
+                scale: (_isHighRisk(risk?.riskLevel) || overallUnsafe)
+                    ? _pulseAnim.value
+                    : 1.0,
                 child: Container(
                   width: 12,
                   height: 12,
@@ -659,7 +1067,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    risk?.riskLevel ?? 'SAFE',
+                    headerLevel,
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -1059,6 +1467,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   ) {
     final elapsed = _tripState?.elapsed ?? Duration.zero;
     final riskLevel = risk?.riskLevel ?? 'SAFE';
+    final overallRiskLevel = risk?.overallRiskLevel ?? riskLevel;
+    final overallUnsafe = risk?.overallUnsafe ?? false;
     final riskScore = risk?.riskScore ?? 0.0;
 
     return Padding(
@@ -1118,6 +1528,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                      if (risk?.policyReason.isNotEmpty == true)
+                        Text(
+                          risk!.policyReason,
+                          style: GoogleFonts.inter(fontSize: 11, color: ts),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
                   ),
                 ),
@@ -1152,7 +1569,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               Expanded(
                 child: _statChip(
                   icon: Icons.shield_outlined,
-                  value: riskLevel,
+                  value: overallUnsafe
+                      ? '$overallRiskLevel (UNSAFE)'
+                      : overallRiskLevel,
                   label: 'Status',
                   isDark: isDark,
                   tp: tp,
