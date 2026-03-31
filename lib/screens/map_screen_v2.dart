@@ -57,6 +57,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final RouteService _routeService = RouteService();
   GoogleMapController? _mapController;
+  bool _mapReady = false;
   late AnimationController _panelController;
   late AnimationController _pulseController;
   late Animation<Offset> _panelSlide;
@@ -83,6 +84,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   StreamSubscription<Position>? _locationSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _tripDocSub;
   DateTime? _lastFollowAt;
+
+  // Rerouting state
+  bool _isRerouting = false;
+  DateTime? _lastRerouteAt;
+  /// The decoded route points used for deviation checks.
+  List<LatLng> _currentRoutePoints = [];
+  static const double _rerouteThresholdMeters = 100.0;
+  static const Duration _rerouteCooldown = Duration(seconds: 30);
 
   ActiveTripState? _tripState;
   StreamSubscription<ActiveTripState>? _tripSub;
@@ -187,15 +196,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ).listen((Position p) {
             if (mounted) {
-              setState(() => _userLocation = LatLng(p.latitude, p.longitude));
+              final newPos = LatLng(p.latitude, p.longitude);
+              setState(() => _userLocation = newPos);
               final now = DateTime.now();
-              if (_screen == _MapPhase.active &&
-                  (_lastFollowAt == null ||
-                      now.difference(_lastFollowAt!).inMilliseconds > 1500)) {
-                _lastFollowAt = now;
-                _mapController?.animateCamera(
-                  CameraUpdate.newLatLng(_userLocation!),
-                );
+              if (_screen == _MapPhase.active) {
+                // Follow camera like Google Maps navigation
+                if (_lastFollowAt == null ||
+                    now.difference(_lastFollowAt!).inMilliseconds > 1500) {
+                  _lastFollowAt = now;
+                  _mapController?.animateCamera(
+                    CameraUpdate.newLatLng(newPos),
+                  );
+                }
+                // Check for route deviation and reroute if needed
+                _checkDeviationAndReroute(newPos);
               }
             }
           });
@@ -207,6 +221,149 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _hasLocationPermission = false;
         });
       }
+    }
+  }
+
+  // ── Rerouting logic ──────────────────────────────────────────────────────
+
+  /// Check if the user has deviated from the expected route.
+  /// If so, fetch a new route from their current position to the destination
+  /// and update the displayed polyline.
+  void _checkDeviationAndReroute(LatLng userPos) {
+    // Only reroute during active trips with a known destination
+    if (_screen != _MapPhase.active || _destLatLng == null) return;
+    // Need a route to compare against
+    if (_currentRoutePoints.length < 2) return;
+    // Cooldown: don't re-request within 30 seconds of the last reroute
+    if (_lastRerouteAt != null &&
+        DateTime.now().difference(_lastRerouteAt!) < _rerouteCooldown) {
+      return;
+    }
+    // Don't stack concurrent reroute calls
+    if (_isRerouting) return;
+
+    // Check if user is within the corridor of the current route.
+    // We find the minimum distance from the user's position to any segment
+    // of the polyline, not just to discrete points (more accurate).
+    final double minDist = _minDistanceToPolyline(userPos, _currentRoutePoints);
+
+    if (minDist <= _rerouteThresholdMeters) return; // still on route
+
+    debugPrint(
+      'MapScreen: route deviation detected — ${minDist.toStringAsFixed(0)}m '
+      'from route. Rerouting from current position to $_destName...',
+    );
+
+    _performReroute(userPos);
+  }
+
+  /// Compute the minimum distance (meters) from [point] to the polyline
+  /// defined by [polyline]. Checks each segment, not just vertices, so short
+  /// segments don't create blind spots.
+  double _minDistanceToPolyline(LatLng point, List<LatLng> polyline) {
+    double best = double.infinity;
+    for (int i = 0; i < polyline.length - 1; i++) {
+      final d = _distToSegment(point, polyline[i], polyline[i + 1]);
+      if (d < best) best = d;
+      if (best < 10) return best; // close enough, no need to keep checking
+    }
+    // Also check the raw vertex distance for the last point
+    final dLast = Geolocator.distanceBetween(
+      point.latitude, point.longitude,
+      polyline.last.latitude, polyline.last.longitude,
+    );
+    if (dLast < best) best = dLast;
+    return best;
+  }
+
+  /// Distance (meters) from [p] to the closest point on segment [a]→[b].
+  /// Uses a flat-earth projection that is accurate enough at city scale.
+  double _distToSegment(LatLng p, LatLng a, LatLng b) {
+    // Convert to a local flat coordinate system (meters from 'a')
+    final double cosLat = math.cos(a.latitude * math.pi / 180);
+    double ax = 0, ay = 0;
+    double bx = (b.longitude - a.longitude) * 111320 * cosLat;
+    double by = (b.latitude - a.latitude) * 110540;
+    double px = (p.longitude - a.longitude) * 111320 * cosLat;
+    double py = (p.latitude - a.latitude) * 110540;
+
+    final double dx = bx - ax;
+    final double dy = by - ay;
+    final double lenSq = dx * dx + dy * dy;
+
+    double t = 0;
+    if (lenSq > 0) {
+      t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+      t = t.clamp(0.0, 1.0);
+    }
+
+    final double projX = ax + t * dx;
+    final double projY = ay + t * dy;
+    final double ex = px - projX;
+    final double ey = py - projY;
+    return math.sqrt(ex * ex + ey * ey);
+  }
+
+  Future<void> _performReroute(LatLng from) async {
+    setState(() => _isRerouting = true);
+
+    try {
+      final routePoints = await _routeService.fetchRoute(
+        startLat: from.latitude,
+        startLng: from.longitude,
+        endLat: _destLatLng!.latitude,
+        endLng: _destLatLng!.longitude,
+      );
+
+      if (!mounted) return;
+
+      final pts = routePoints
+          .map((gp) => LatLng(gp.latitude, gp.longitude))
+          .toList();
+
+      if (pts.length >= 2) {
+        setState(() {
+          _currentRoutePoints = pts;
+          _polylines = {
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: pts,
+              color: _polylines.isNotEmpty
+                  ? _polylines.first.color
+                  : const Color(0xFF3B82F6),
+              width: 5,
+              jointType: JointType.round,
+              startCap: Cap.roundCap,
+              endCap: Cap.roundCap,
+            ),
+          };
+        });
+
+        // Also update the origin marker to the user's current position
+        final existingDest = _markers
+            .where((m) => m.markerId.value == 'dest')
+            .toList();
+        setState(() {
+          _markers = {
+            Marker(
+              markerId: const MarkerId('origin'),
+              position: from,
+              icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueBlue,
+              ),
+              infoWindow: const InfoWindow(title: 'Current position'),
+            ),
+            ...existingDest,
+          };
+        });
+      }
+
+      _lastRerouteAt = DateTime.now();
+      debugPrint('MapScreen: reroute complete — ${pts.length} points');
+    } catch (e) {
+      debugPrint('MapScreen: reroute failed — $e');
+    } finally {
+      if (mounted) setState(() => _isRerouting = false);
     }
   }
 
@@ -244,6 +401,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _destLatLng = null;
           _markers = {};
           _polylines = {};
+          _currentRoutePoints = [];
+          _isRerouting = false;
+          _lastRerouteAt = null;
           _searchController.clear();
         });
       }
@@ -271,11 +431,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     final expectedRoute = data['expected_route'];
     final encoded = expectedRoute is Map ? expectedRoute['polyline'] as String? : null;
-    final expectedPoints = savedRoutePoints.isNotEmpty
+    var expectedPoints = savedRoutePoints.isNotEmpty
         ? savedRoutePoints
         : (encoded != null && encoded.isNotEmpty)
-        ? _decodePolyline(encoded)
-        : <LatLng>[origin, if (destination != null) destination];
+            ? _decodePolyline(encoded)
+            : <LatLng>[origin, if (destination != null) destination];
+
+    // Avoid replacing a full preview route with a 2-point straight line when a
+    // snapshot arrives before routePolyline or expected_route is populated.
+    if (expectedPoints.length <= 2 &&
+        _polylines.isNotEmpty &&
+        _polylines.first.points.length > 2) {
+      expectedPoints = List<LatLng>.from(_polylines.first.points);
+    }
 
     final nextMarkers = <Marker>{
       Marker(
@@ -302,6 +470,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _screen = _MapPhase.active;
       _markers = nextMarkers;
       if (expectedPoints.length >= 2) {
+        _currentRoutePoints = expectedPoints;
         _polylines = {
           Polyline(
             polylineId: const PolylineId('route'),
@@ -530,6 +699,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           .toList();
 
       setState(() {
+        _currentRoutePoints = pts;
         _polylines = {
           Polyline(
             polylineId: const PolylineId('route'),
@@ -591,22 +761,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> _startTrip() async {
     if (_destLatLng == null || _destName == null) return;
+    final previewPoints = _polylines.isNotEmpty ? _polylines.first.points : <LatLng>[];
+    final routePolylinePreview = previewPoints.length >= 2
+        ? previewPoints
+                .map((p) => {'lat': p.latitude, 'lon': p.longitude})
+                .toList()
+        : null;
+
     final String? id = await TripManager().startTrip(
       originLat: _origin.latitude,
       originLon: _origin.longitude,
       destLat: _destLatLng!.latitude,
       destLon: _destLatLng!.longitude,
       destinationName: _destName!,
+      routePolylinePreview: routePolylinePreview,
     );
     if (id != null && mounted) {
-      final previewPoints = _polylines.isNotEmpty ? _polylines.first.points : <LatLng>[];
-      if (previewPoints.length >= 2) {
-        await FirebaseFirestore.instance.collection('trips').doc(id).set({
-          'routePolyline': previewPoints
-              .map((p) => {'lat': p.latitude, 'lon': p.longitude})
-              .toList(),
-        }, SetOptions(merge: true));
-      }
       setState(() => _screen = _MapPhase.active);
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -624,6 +794,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _destLatLng = null;
         _markers = {};
         _polylines = {};
+        _currentRoutePoints = [];
+        _isRerouting = false;
+        _lastRerouteAt = null;
         _searchController.clear();
       });
     }
@@ -683,13 +856,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               zoom: 13,
             ),
             style: isDark ? _kDarkMapStyle : null,
+            markerType: GoogleMapMarkerType.marker,
+            liteModeEnabled: false,
             onMapCreated: (c) {
               _mapController = c;
+              setState(() => _mapReady = true);
               if (_userLocation != null) {
                 c.animateCamera(CameraUpdate.newLatLngZoom(_userLocation!, 15));
               }
             },
-            markers: _markers,
+            // Avoid sending non-empty "initial markers" to the platform view
+            // before it's fully initialized.
+            markers: _mapReady ? _markers : const <Marker>{},
             polylines: _polylines,
             myLocationEnabled: _hasLocationPermission,
             myLocationButtonEnabled: false,
@@ -761,6 +939,56 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               isDark: isDark,
             ),
           ),
+
+          // Rerouting indicator
+          if (_isRerouting)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 60,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFFF59E0B),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Rerouting...',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? const Color(0xFFF59E0B)
+                              : const Color(0xFFD97706),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
 
           if (_screen == _MapPhase.active) _buildActiveHeader(isDark, risk, rc),
 

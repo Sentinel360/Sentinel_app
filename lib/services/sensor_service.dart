@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:battery_plus/battery_plus.dart';
+import 'offline_cache_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
@@ -127,6 +129,7 @@ class SensorService {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final Battery _battery = Battery();
+  final OfflineCacheService _offlineCache = OfflineCacheService();
 
   String? _currentTripId;
   ActiveSensor _activeSensor = ActiveSensor.phone;
@@ -252,19 +255,38 @@ class SensorService {
     try {
       final tripId = _currentTripId!;
       for (final event in events) {
-        await _db
-            .collection('trips')
-            .doc(tripId)
-            .collection('sensor_data')
-            .add({
-              'trip_id': tripId,
-              ...event.toMap(),
-              'source': 'PHONE',
-              'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
-              'ingested_at': FieldValue.serverTimestamp(),
-            });
+        final eventData = {
+          'trip_id': tripId,
+          ...event.toMap(),
+          'source': 'PHONE',
+          'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
+          'ingested_at': FieldValue.serverTimestamp(),
+        };
+
+        try {
+          await _db
+              .collection('trips')
+              .doc(tripId)
+              .collection('sensor_data')
+              .add(eventData);
+        } catch (e) {
+          // Network error — cache locally for later flush
+          debugPrint('[SensorService] Firestore write failed, caching offline: $e');
+          await _offlineCache.cacheEvent(tripId, {
+            'trip_id': tripId,
+            ...event.toMap(),
+            'source': 'PHONE',
+            'userId': FirebaseAuth.instance.currentUser?.uid ?? '',
+          });
+        }
       }
       _buffer.removeRange(0, events.length);
+
+      // Opportunistically try to flush any cached events
+      final pending = await _offlineCache.pendingCount;
+      if (pending > 0) {
+        _offlineCache.flushToFirestore(); // fire-and-forget
+      }
     } catch (e) {
       print('[SensorService] Transmit error: $e');
     }

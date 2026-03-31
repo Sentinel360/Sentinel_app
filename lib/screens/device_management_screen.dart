@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/device_service.dart';
+import '../services/ble_service.dart';
 import '../models/device_model.dart';
 import 'dart:math' as math;
 
@@ -20,6 +21,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
   late AnimationController _pulseController;
   late AnimationController _glowController;
   bool _isPairing = false;
+  bool _bleActionBusy = false;
 
   @override
   void initState() {
@@ -329,6 +331,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
     );
 
     if (confirmed == true) {
+      await BLEService().disconnect();
       await _deviceService.setDeviceActive(deviceId: deviceId, isActive: false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -353,6 +356,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scaffoldBg =
         isDark ? const Color(0xFF050A14) : const Color(0xFFF1F5F9);
+    final textPrimary = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     return Scaffold(
@@ -372,7 +376,6 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 final device = snapshot.data;
                 return Column(
                   children: [
-                    // Header
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
                       child: Row(
@@ -382,7 +385,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                             style: GoogleFonts.inter(
                               fontSize: 28,
                               fontWeight: FontWeight.w700,
-                              color: const Color(0xFFF1F5F9),
+                              color: textPrimary,
                               letterSpacing: -0.5,
                             ),
                           ),
@@ -396,14 +399,10 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                                   vertical: 10,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF8B5CF6,
-                                  ).withOpacity(0.15),
+                                  color: const Color(0xFF8B5CF6).withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
-                                    color: const Color(
-                                      0xFF8B5CF6,
-                                    ).withOpacity(0.4),
+                                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.4),
                                     width: 1,
                                   ),
                                 ),
@@ -416,7 +415,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                                     ),
                                     const SizedBox(width: 6),
                                     Text(
-                                      'Pair Device',
+                                      'Register hub',
                                       style: GoogleFonts.inter(
                                         color: const Color(0xFF8B5CF6),
                                         fontSize: 13,
@@ -431,11 +430,24 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                       ),
                     ),
                     const SizedBox(height: 8),
-
                     Expanded(
-                      child: device == null
-                          ? _buildEmptyState()
-                          : _buildDeviceInfo(device),
+                      child: StreamBuilder<BLEConnectionState>(
+                        stream: BLEService().stateStream,
+                        initialData: BLEService().state,
+                        builder: (context, bleSnap) {
+                          final ble = bleSnap.data ?? BLEConnectionState.disconnected;
+                          final bleOn =
+                              ble == BLEConnectionState.connected ||
+                              ble == BLEConnectionState.mockConnected;
+                          if (device != null) {
+                            return _buildDeviceInfo(context, device, isDark);
+                          }
+                          if (bleOn) {
+                            return _buildWearableLinkedState(context, isDark);
+                          }
+                          return _buildEmptyState(context, isDark);
+                        },
+                      ),
                     ),
                   ],
                 );
@@ -448,12 +460,15 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
     );
   }
 
-  Widget _buildEmptyState() {
-    return Padding(
+  Widget _buildEmptyState(BuildContext context, bool isDark) {
+    final textPrimary = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final textMuted = const Color(0xFF64748B);
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.all(24),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          const SizedBox(height: 12),
           Container(
             width: 120,
             height: 120,
@@ -463,67 +478,53 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  const Color(0xFF8B5CF6).withOpacity(0.2),
-                  const Color(0xFF7C3AED).withOpacity(0.1),
+                  const Color(0xFF8B5CF6).withValues(alpha: 0.2),
+                  const Color(0xFF7C3AED).withValues(alpha: 0.1),
                 ],
               ),
               border: Border.all(
-                color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                color: const Color(0xFF8B5CF6).withValues(alpha: 0.35),
                 width: 2,
               ),
             ),
             child: const Icon(
-              Icons.device_unknown,
-              size: 60,
+              Icons.bluetooth_searching,
+              size: 56,
               color: Color(0xFF8B5CF6),
             ),
           ),
           const SizedBox(height: 24),
           Text(
-            'No Device Paired',
+            'Link your wearable',
             style: GoogleFonts.inter(
               fontSize: 24,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFFF1F5F9),
+              color: textPrimary,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Connect your Sentinel IoT device\nto start monitoring your trips',
+            'Use Bluetooth below to connect your Sentinel360 wearable.\n'
+            'Optional: register a hub device ID in the cloud with “Register hub”.',
             textAlign: TextAlign.center,
             style: GoogleFonts.inter(
               fontSize: 14,
-              color: const Color(0xFF64748B),
+              color: textMuted,
               height: 1.5,
             ),
           ),
-          const SizedBox(height: 32),
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton(
-              onPressed: _showPairingDialog,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF8B5CF6),
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.add_circle_outline, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Pair Device',
-                    style: GoogleFonts.inter(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+          const SizedBox(height: 28),
+          _buildBleWearableCard(context, isDark),
+          const SizedBox(height: 20),
+          TextButton.icon(
+            onPressed: _showPairingDialog,
+            icon: const Icon(Icons.cloud_outlined, color: Color(0xFF8B5CF6), size: 20),
+            label: Text(
+              'Register hub device (optional)',
+              style: GoogleFonts.inter(
+                color: const Color(0xFF8B5CF6),
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
               ),
             ),
           ),
@@ -532,7 +533,385 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
     );
   }
 
-  Widget _buildDeviceInfo(DeviceModel device) {
+  Widget _buildWearableLinkedState(BuildContext context, bool isDark) {
+    final textPrimary = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final textMuted = const Color(0xFF64748B);
+    final name = BLEService().connectedPeripheralName ?? 'Sentinel360';
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  const Color(0xFF10B981).withValues(alpha: 0.18),
+                  const Color(0xFF059669).withValues(alpha: 0.08),
+                ],
+              ),
+              border: Border.all(
+                color: const Color(0xFF10B981).withValues(alpha: 0.45),
+                width: 1.5,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.bluetooth_connected,
+                        color: Color(0xFF10B981),
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Wearable connected',
+                            style: GoogleFonts.inter(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              color: textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            name,
+                            style: GoogleFonts.inter(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF10B981),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                _statusRow(
+                  icon: Icons.link,
+                  label: 'Connection',
+                  value: 'Bluetooth LE • Active',
+                  isDark: isDark,
+                ),
+                const SizedBox(height: 10),
+                _statusRow(
+                  icon: Icons.battery_std,
+                  label: 'Battery',
+                  value: 'Not reported by device yet',
+                  isDark: isDark,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Long-press SOS on the wearable sends the same emergency alert as the app. Status is saved to your account.',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    height: 1.45,
+                    color: textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          _buildBleWearableCard(context, isDark),
+          const SizedBox(height: 16),
+          Center(
+            child: TextButton.icon(
+              onPressed: _showPairingDialog,
+              icon: Icon(
+                Icons.cloud_outlined,
+                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                size: 20,
+              ),
+              label: Text(
+                'Also register a hub device (optional)',
+                style: GoogleFonts.inter(
+                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required bool isDark,
+  }) {
+    final textSecondary = isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: textSecondary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: GoogleFonts.inter(fontSize: 13, color: textSecondary, height: 1.35),
+              children: [
+                TextSpan(
+                  text: '$label: ',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                TextSpan(
+                  text: value,
+                  style: TextStyle(
+                    color: isDark ? const Color(0xFFE2E8F0) : const Color(0xFF334155),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _connectWearableBle() async {
+    setState(() => _bleActionBusy = true);
+    try {
+      final ok = await BLEService().connect();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ok
+                ? 'Wearable connected. IoT SOS works while Bluetooth is on.'
+                : 'No Sentinel360 device found. Power the wearable and try again.',
+            style: GoogleFonts.inter(color: Colors.white),
+          ),
+          backgroundColor: ok ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _bleActionBusy = false);
+    }
+  }
+
+  Future<void> _disconnectWearableBle() async {
+    setState(() => _bleActionBusy = true);
+    try {
+      await BLEService().disconnect();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Wearable disconnected',
+            style: GoogleFonts.inter(color: Colors.white),
+          ),
+          backgroundColor: const Color(0xFF64748B),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _bleActionBusy = false);
+    }
+  }
+
+  String _bleStatusLabel(BLEConnectionState s) {
+    switch (s) {
+      case BLEConnectionState.connected:
+      case BLEConnectionState.mockConnected:
+        return 'Connected';
+      case BLEConnectionState.scanning:
+        return 'Scanning…';
+      case BLEConnectionState.connecting:
+        return 'Connecting…';
+      case BLEConnectionState.disconnected:
+        return 'Not connected';
+    }
+  }
+
+  Widget _buildBleWearableCard(BuildContext context, bool isDark) {
+    final textPrimary = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final cardTop = isDark ? const Color(0xFF1E293B) : Colors.white;
+    final cardBottom = isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+    return StreamBuilder<BLEConnectionState>(
+      stream: BLEService().stateStream,
+      initialData: BLEService().state,
+      builder: (context, snapshot) {
+        final ble = snapshot.data ?? BLEConnectionState.disconnected;
+        final connected =
+            ble == BLEConnectionState.connected ||
+            ble == BLEConnectionState.mockConnected;
+        final busy = ble == BLEConnectionState.scanning ||
+            ble == BLEConnectionState.connecting ||
+            _bleActionBusy;
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                cardTop.withValues(alpha: isDark ? 0.95 : 1),
+                cardBottom.withValues(alpha: isDark ? 0.85 : 1),
+              ],
+            ),
+            border: Border.all(
+              color: (connected ? const Color(0xFF10B981) : const Color(0xFF64748B))
+                  .withValues(alpha: 0.45),
+              width: 1,
+            ),
+            boxShadow: isDark
+                ? null
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.bluetooth_connected,
+                    color: connected
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFF94A3B8),
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Wearable (Bluetooth)',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: textPrimary,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: (connected
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFF475569))
+                          .withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _bleStatusLabel(ble),
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: connected
+                            ? const Color(0xFF10B981)
+                            : const Color(0xFF94A3B8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Connect your Sentinel360 wearable here. When linked, a long-press SOS on the device triggers the same emergency alerts as the app (no trip required).',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  height: 1.45,
+                  color: const Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: busy ? null : _connectWearableBle,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF8B5CF6),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.link, size: 18),
+                      label: Text(
+                        'Connect',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: (!connected || busy) ? null : _disconnectWearableBle,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: textPrimary,
+                        side: BorderSide(
+                          color: const Color(0xFF475569).withValues(alpha: 0.65),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.link_off, size: 18),
+                      label: Text(
+                        'Disconnect',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDeviceInfo(BuildContext context, DeviceModel device, bool isDark) {
+    final textPrimary = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
     final isOnline = device.isActive;
     final statusColor = isOnline
         ? const Color(0xFF10B981)
@@ -616,7 +995,7 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
                                   style: GoogleFonts.inter(
                                     fontSize: 18,
                                     fontWeight: FontWeight.w700,
-                                    color: const Color(0xFFF1F5F9),
+                                    color: textPrimary,
                                   ),
                                 ),
                                 const SizedBox(height: 6),
@@ -772,12 +1151,15 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen>
           ),
           const SizedBox(height: 24),
 
+          _buildBleWearableCard(context, isDark),
+          const SizedBox(height: 24),
+
           Text(
             'Device Actions',
             style: GoogleFonts.inter(
               fontSize: 16,
               fontWeight: FontWeight.w600,
-              color: const Color(0xFFF1F5F9),
+              color: textPrimary,
             ),
           ),
           const SizedBox(height: 12),

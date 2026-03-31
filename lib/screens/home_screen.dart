@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/trip_service.dart';
 import '../services/device_service.dart';
 import '../services/trip_manager.dart';
+import '../services/ble_service.dart';
 import '../models/trip_model.dart';
 import '../models/device_model.dart';
 import '../models/user_model.dart';
@@ -32,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isLoading = true;
   String _firstName = 'there';
   String _initials = '?';
+  int _totalTripCount = 0; // Actual count from Firestore (not capped at 10)
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
   Color get _bg => _isDark ? const Color(0xFF050A14) : const Color(0xFFF8FAFC);
@@ -76,15 +78,19 @@ class _HomeScreenState extends State<HomeScreen>
       print('DEBUG - User fetch error: $e');
     }
 
-    // Fetch trips and device separately
+    // Fetch trips, device, and actual total trip count separately
     try {
-      final trips = await _tripService.getRecentTrips(uid);
-      final device = await _deviceService.getDeviceByUserId(uid);
+      final results = await Future.wait([
+        _tripService.getRecentTrips(uid),
+        _deviceService.getDeviceByUserId(uid),
+        _tripService.getTotalTripCount(uid),
+      ]);
 
       if (mounted) {
         setState(() {
-          _recentTrips = trips;
-          _device = device;
+          _recentTrips = results[0] as List<TripModel>;
+          _device = results[1] as DeviceModel?;
+          _totalTripCount = results[2] as int;
         });
       }
     } catch (e) {
@@ -108,16 +114,45 @@ class _HomeScreenState extends State<HomeScreen>
 
     final initials = _initials;
 
-    final isOnline = _device?.isActive ?? false;
+    final bleWearableLive = tripState.bleState == BLEConnectionState.connected ||
+        tripState.bleState == BLEConnectionState.mockConnected;
+    final cloudHubOnline = _device?.isActive ?? false;
+    final hasCloudHub = _device != null;
+    final wearableName = BLEService().connectedPeripheralName;
+
+    final isOnline = bleWearableLive || cloudHubOnline;
     final glowColor = isOnline
         ? const Color(0xFF10B981)
-        : const Color(0xFFEF4444);
+        : (hasCloudHub ? const Color(0xFFEF4444) : const Color(0xFF64748B));
 
-    // Calculate stats
-    final totalTrips = _recentTrips.length;
+    String deviceStatusTitle;
+    if (bleWearableLive && hasCloudHub && cloudHubOnline) {
+      deviceStatusTitle = 'Wearable & hub connected';
+    } else if (bleWearableLive) {
+      deviceStatusTitle = 'Wearable connected';
+    } else if (hasCloudHub && cloudHubOnline) {
+      deviceStatusTitle = 'IoT hub online';
+    } else if (hasCloudHub) {
+      deviceStatusTitle = 'IoT hub offline';
+    } else {
+      deviceStatusTitle = 'No device linked';
+    }
+
+    final batteryLabel = hasCloudHub
+        ? '${_device!.batteryLevel}%'
+        : (bleWearableLive ? '—' : 'N/A');
+    final deviceDetailLabel = hasCloudHub
+        ? '• ${_device!.deviceId}'
+        : (bleWearableLive
+            ? '• ${wearableName ?? 'Bluetooth LE'}'
+            : '• Open Device to connect');
+
+    // Calculate stats — use the real total count, not capped list length
+    final totalTrips = _totalTripCount;
     final safeTrips = _recentTrips.where((t) => t.anomalies.isEmpty).length;
-    final safePercent = totalTrips > 0
-        ? '${((safeTrips / totalTrips) * 100).toStringAsFixed(0)}%'
+    final recentCount = _recentTrips.length;
+    final safePercent = recentCount > 0
+        ? '${((safeTrips / recentCount) * 100).toStringAsFixed(0)}%'
         : 'N/A';
 
     return Scaffold(
@@ -389,10 +424,12 @@ class _HomeScreenState extends State<HomeScreen>
                                                 ),
                                               ),
                                               child: Icon(
-                                                isOnline
-                                                    ? Icons
-                                                          .verified_user_outlined
-                                                    : Icons.shield_outlined,
+                                                bleWearableLive
+                                                    ? Icons.bluetooth_connected
+                                                    : (isOnline
+                                                        ? Icons
+                                                            .verified_user_outlined
+                                                        : Icons.shield_outlined),
                                                 color: glowColor,
                                                 size: 28,
                                               ),
@@ -404,11 +441,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                     CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
-                                                    _device != null
-                                                        ? (_device!.isActive
-                                                              ? 'IoT Device Connected'
-                                                              : 'IoT Device Offline')
-                                                        : 'No Device Paired',
+                                                    deviceStatusTitle,
                                                     style: GoogleFonts.inter(
                                                       fontSize: 18,
                                                       fontWeight:
@@ -436,8 +469,11 @@ class _HomeScreenState extends State<HomeScreen>
                                                         child: Row(
                                                           children: [
                                                             Icon(
-                                                              Icons
-                                                                  .battery_charging_full,
+                                                              hasCloudHub
+                                                                  ? Icons
+                                                                      .battery_charging_full
+                                                                  : Icons
+                                                                      .signal_cellular_alt,
                                                               color: glowColor,
                                                               size: 14,
                                                             ),
@@ -445,9 +481,11 @@ class _HomeScreenState extends State<HomeScreen>
                                                               width: 4,
                                                             ),
                                                             Text(
-                                                              _device != null
-                                                                  ? '${_device!.batteryLevel}%'
-                                                                  : 'N/A',
+                                                              hasCloudHub
+                                                                  ? batteryLabel
+                                                                  : (bleWearableLive
+                                                                      ? 'BLE live'
+                                                                      : batteryLabel),
                                                               style: GoogleFonts.inter(
                                                                 fontSize: 12,
                                                                 fontWeight:
@@ -461,15 +499,16 @@ class _HomeScreenState extends State<HomeScreen>
                                                         ),
                                                       ),
                                                       const SizedBox(width: 8),
-                                                      Text(
-                                                        _device != null
-                                                            ? '• ${_device!.deviceId}'
-                                                            : '• Not connected',
-                                                        style:
-                                                            GoogleFonts.inter(
+                                                      Flexible(
+                                                        child: Text(
+                                                          deviceDetailLabel,
+                                                          overflow: TextOverflow.ellipsis,
+                                                          style:
+                                                              GoogleFonts.inter(
                                                               fontSize: 12,
                                                               color: _textMuted,
                                                             ),
+                                                        ),
                                                       ),
                                                     ],
                                                   ),
@@ -501,7 +540,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 ),
                               ),
                               TextButton(
-                                onPressed: () {},
+                                onPressed: () => Navigator.pushNamed(context, '/trip_history'),
                                 child: Row(
                                   children: [
                                     Text(
@@ -576,7 +615,8 @@ class _HomeScreenState extends State<HomeScreen>
                                       return GestureDetector(
                                         onTap: () => Navigator.pushNamed(
                                           context,
-                                          '/ride_status',
+                                          '/trip_detail',
+                                          arguments: trip.tripId,
                                         ),
                                         child: Container(
                                           width: 280,
@@ -643,7 +683,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                   const SizedBox(width: 8),
                                                   Expanded(
                                                     child: Text(
-                                                      'Trip ${index + 1}',
+                                                      trip.displayName,
                                                       style: GoogleFonts.inter(
                                                         fontSize: 14,
                                                         fontWeight:
@@ -722,7 +762,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                 children: [
                                                   _tripStat(
                                                     Icons.timer_outlined,
-                                                    '${trip.duration} min',
+                                                    trip.durationFormatted,
                                                   ),
                                                   const SizedBox(width: 16),
                                                   _tripStat(

@@ -18,7 +18,11 @@ import 'screens/signup_screen.dart';
 import 'screens/emergency_contacts_screen.dart';
 import 'widgets/auth_wrapper.dart';
 import 'screens/splash_screen.dart';
+import 'screens/trip_history_screen.dart';
+import 'screens/trip_detail_screen.dart';
 import 'theme/app_theme.dart';
+import 'app_keys.dart';
+import 'widgets/wearable_sos_listener.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,6 +72,7 @@ class MyApp extends StatelessWidget {
     final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp(
       title: 'Sentinel 360',
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       debugShowCheckedModeBanner: false,
       themeMode: themeProvider.mode == AppThemeMode.dark
           ? ThemeMode.dark
@@ -76,6 +81,8 @@ class MyApp extends StatelessWidget {
           : ThemeMode.system,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
+      builder: (context, child) =>
+          WearableSosListener(child: child ?? const SizedBox.shrink()),
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),
@@ -89,6 +96,20 @@ class MyApp extends StatelessWidget {
         '/device': (context) => const DeviceManagementScreen(),
         '/profile': (context) => const ProfileScreen(),
         '/emergency_contacts': (context) => const EmergencyContactsScreen(),
+        '/trip_history': (context) => const TripHistoryScreen(),
+        '/trip_detail': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments;
+          final String? tripId = args is String ? args : null;
+          if (tripId == null || tripId.isEmpty) {
+            return Scaffold(
+              appBar: AppBar(title: const Text('Trip')),
+              body: const Center(
+                child: Text('Missing or invalid trip ID'),
+              ),
+            );
+          }
+          return TripDetailScreen(tripId: tripId);
+        },
       },
     );
   }

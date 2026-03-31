@@ -139,4 +139,33 @@ class TripService {
     if (!doc.exists || doc.data() == null) return null;
     return TripModel.fromMap(doc.id, doc.data()!);
   }
+
+  /// Get the actual total number of completed + active trips for a user.
+  /// Uses an aggregation count query so we don't download every document.
+  Future<int> getTotalTripCount(String userId) async {
+    final snapshot = await _firestore
+        .collection('trips')
+        .where('userId', isEqualTo: userId)
+        .count()
+        .get();
+    return snapshot.count ?? 0;
+  }
+
+  /// Get ALL trips for a user (for trip history page), paginated.
+  Future<List<TripModel>> getAllTrips(String userId, {int limit = 50, DocumentSnapshot? startAfter}) async {
+    Query query = _firestore
+        .collection('trips')
+        .where('userId', isEqualTo: userId)
+        .orderBy('startedAt', descending: true)
+        .limit(limit);
+
+    if (startAfter != null) {
+      query = query.startAfterDocument(startAfter);
+    }
+
+    final snapshot = await query.get();
+    return snapshot.docs
+        .map((doc) => TripModel.fromMap(doc.id, doc.data() as Map<String, dynamic>))
+        .toList();
+  }
 }

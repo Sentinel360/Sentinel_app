@@ -386,87 +386,87 @@ class _EmergencyScreenState extends State<EmergencyScreen>
   // ── Info card ─────────────────────────────────────────────────────────────
 
   Widget _buildInfoCard() {
-    final items = [
+    final infoItems = [
       (Icons.contact_phone, 'Emergency Contacts', 'SMS with your location'),
       (Icons.location_on, 'Live GPS Location', 'Exact coordinates shared'),
-      (
-        Icons.local_police,
-        'Emergency Numbers',
-        'Ghana Police 191 • Ambulance 193',
-      ),
     ];
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            _isDark ? const Color(0xFF1E293B).withOpacity(0.6) : Colors.white,
-            _isDark ? const Color(0xFF0F172A).withOpacity(0.4) : const Color(0xFFF1F5F9),
-          ],
-        ),
-        border: Border.all(
-          color: _surfaceBorder,
-          width: 1,
-        ),
-      ),
-      child: Column(
-        children: items
-            .map(
-              (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF3B82F6).withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(10),
+
+    return Column(
+      children: [
+        // Info summary card
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                _isDark ? const Color(0xFF1E293B).withOpacity(0.6) : Colors.white,
+                _isDark ? const Color(0xFF0F172A).withOpacity(0.4) : const Color(0xFFF1F5F9),
+              ],
+            ),
+            border: Border.all(color: _surfaceBorder, width: 1),
+          ),
+          child: Column(
+            children: [
+              ...infoItems.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF3B82F6).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(item.$1, color: const Color(0xFF3B82F6), size: 18),
                       ),
-                      child: Icon(
-                        item.$1,
-                        color: const Color(0xFF3B82F6),
-                        size: 18,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.$2, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: _textPrimary)),
+                            Text(item.$3, style: GoogleFonts.inter(fontSize: 11, color: _textSecondary)),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.$2,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: _textPrimary,
-                            ),
-                          ),
-                          Text(
-                            item.$3,
-                            style: GoogleFonts.inter(
-                              fontSize: 11,
-                              color: _textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(
-                      Icons.check_circle,
-                      color: Color(0xFF10B981),
-                      size: 16,
-                    ),
-                  ],
+                      const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 16),
+                    ],
+                  ),
                 ),
               ),
-            )
-            .toList(),
-      ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // (Removed: test mode banner + police/ambulance/WhatsApp quick actions)
+      ],
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SMS vs WhatsApp Research Findings (for team review):
+  //
+  // CHANNEL RELIABILITY IN GHANA:
+  //   - SMS: 95-98% delivery rate, 98% open rate, works on ALL phones
+  //     NCA mandates 5-second delivery. Reaches rural areas without internet.
+  //   - WhatsApp: 91.8% of internet users in Ghana use it, but requires
+  //     smartphone + data. Dominant in urban areas.
+  //   - Phone calls: 60.3% of Ghanaians prefer calls for emergencies.
+  //
+  // RECOMMENDATION FOR SENTINEL360:
+  //   Primary: Direct phone call (fastest, most reliable, preferred by users)
+  //   Secondary: SMS (broadest reach, works on feature phones, 98% open rate)
+  //   Tertiary: WhatsApp (rich messages with location link, urban-oriented)
+  //   Optimal: Use ALL THREE channels simultaneously for maximum reach
+  //
+  // Sources: DataReportal Digital 2025 Ghana, NCA benchmarks, GeoPoll,
+  //          PMC obstetric referral study, Arkesel channel analysis
+  // ─────────────────────────────────────────────────────────────────────────
 
   // ── SOS Button ────────────────────────────────────────────────────────────
 
