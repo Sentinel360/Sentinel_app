@@ -40,7 +40,14 @@ class AuthService {
         createdAt: DateTime.now(),
       );
 
-      await _firestore.collection('users').doc(user.uid).set(userModel.toMap());
+      try {
+        await _firestore.collection('users').doc(user.uid).set(userModel.toMap());
+      } catch (_) {
+        // Firestore write failed — delete the Firebase Auth user so the
+        // account doesn't exist in a half-created state. User must retry.
+        await user.delete();
+        rethrow;
+      }
 
       return userModel;
     } on FirebaseAuthException catch (e) {
@@ -117,7 +124,7 @@ class AuthService {
   // Get user document from Firestore
   Future<UserModel?> _getUserFromFirestore(String uid) async {
     final doc = await _firestore.collection('users').doc(uid).get();
-    if (!doc.exists) return null;
+    if (!doc.exists || doc.data() == null) return null;
     return UserModel.fromMap(uid, doc.data()!);
   }
 

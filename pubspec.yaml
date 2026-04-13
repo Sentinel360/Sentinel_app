@@ -43,6 +43,8 @@ dependencies:
   flutter_blue_plus: ^1.35.3
   battery_plus: ^6.0.3
   url_launcher: ^6.2.5
+  flutter_foreground_task: ^8.0.0
+  flutter_local_notifications: ^18.0.0
 
 dev_dependencies:
   flutter_test:

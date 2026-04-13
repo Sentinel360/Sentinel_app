@@ -305,14 +305,27 @@ class SensorService {
   }
 
   void _startGyroscope() {
-    _gyroSubscription =
-        gyroscopeEventStream(
-          samplingPeriod: const Duration(milliseconds: 200),
-        ).listen((event) {
-          _gyroX = event.x;
-          _gyroY = event.y;
-          _gyroZ = event.z;
-        });
+    try {
+      _gyroSubscription =
+          gyroscopeEventStream(
+            samplingPeriod: const Duration(milliseconds: 200),
+          ).listen(
+            (event) {
+              _gyroX = event.x;
+              _gyroY = event.y;
+              _gyroZ = event.z;
+            },
+            onError: (e) {
+              // Device has no gyroscope — gyro values stay at 0.0, which is
+              // safe: anomaly thresholds will simply never be crossed via gyro.
+              debugPrint('[SensorService] Gyroscope unavailable: $e');
+              _gyroSubscription?.cancel();
+              _gyroSubscription = null;
+            },
+          );
+    } catch (e) {
+      debugPrint('[SensorService] Gyroscope not supported on this device: $e');
+    }
   }
 
   double _computeVerticalSpeed({

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/foundation.dart'
@@ -23,6 +24,21 @@ import 'screens/trip_detail_screen.dart';
 import 'theme/app_theme.dart';
 import 'app_keys.dart';
 import 'widgets/wearable_sos_listener.dart';
+import 'widgets/safety_check_listener.dart';
+import 'services/trip_foreground_service.dart';
+import 'services/notification_service.dart';
+
+/// Handles FCM messages that arrive while the app is terminated or in the
+/// background. Must be a top-level function annotated with vm:entry-point.
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Firebase is already initialised by the time this runs, but we call
+  // ensureInitialized just in case the isolate is fresh.
+  await Firebase.initializeApp();
+  debugPrint('FCM background message: ${message.messageId}');
+  // No UI work here — the Firestore escalation listener will pick it up
+  // automatically once the user opens the app.
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,9 +52,6 @@ void main() async {
     );
   }
 
-  // On mobile/desktop targets that have native Firebase config files, prefer
-  // Firebase.initializeApp() without explicit options. This avoids hard-crashing
-  // if dotenv keys are missing/empty.
   if (!kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS ||
@@ -49,11 +62,57 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
   }
+
+  // Initialise the foreground service config (must be before startService is called).
+  TripForegroundService.init();
+
+  // Initialise local notifications (creates the Android channel).
+  await NotificationService.init();
+
+  // Register the background message handler before the app starts.
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Request notification permission (iOS requires explicit permission;
+  // on Android 13+ this triggers the system prompt).
+  await FirebaseMessaging.instance.requestPermission(
+    alert: true,
+    sound: true,
+    badge: true,
+  );
+
+  // On iOS, show banners even while the app is in the foreground.
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true,
+    sound: true,
+    badge: false,
+  );
+
+  // When the app is OPEN, Android suppresses FCM banners.
+  // SafetyCheckListener already handles SAFETY_CHECK via its Firestore stream
+  // (shows the undismissable dialog), so we only show a local banner for
+  // non-SAFETY_CHECK messages here to avoid a double dialog.
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    final type = message.data['type'] ?? '';
+    debugPrint('FCM foreground message [type=$type]: ${message.notification?.title}');
+
+    // SAFETY_CHECK is handled by SafetyCheckListener dialog — skip banner.
+    if (type == 'SAFETY_CHECK') return;
+
+    final title = message.notification?.title;
+    final body = message.notification?.body;
+    if (title != null && body != null) {
+      NotificationService.showSafetyCheck(
+        title: title,
+        body: body,
+        attempt: 0, // ID=0 for non-safety-check local notifications
+      );
+    }
+  });
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        // Expose the active trip state globally so all screens stay in sync.
         StreamProvider<ActiveTripState>(
           create: (_) => TripManager().stateStream,
           initialData: TripManager().currentState,
@@ -72,6 +131,7 @@ class MyApp extends StatelessWidget {
     final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp(
       title: 'Sentinel 360',
+      navigatorKey: rootNavigatorKey,
       scaffoldMessengerKey: rootScaffoldMessengerKey,
       debugShowCheckedModeBanner: false,
       themeMode: themeProvider.mode == AppThemeMode.dark
@@ -81,8 +141,11 @@ class MyApp extends StatelessWidget {
           : ThemeMode.system,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      builder: (context, child) =>
-          WearableSosListener(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => WearableSosListener(
+        child: SafetyCheckListener(
+          child: child ?? const SizedBox.shrink(),
+        ),
+      ),
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),

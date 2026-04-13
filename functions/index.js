@@ -15,8 +15,14 @@ setGlobalOptions({ maxInstances: 10 });
 // ── Your Arkesel API key ──────────────────────────────────────────────────────
 const ARKESEL_API_KEY = "RXV4YXpMdFNxQkZpZWdkR2NaUk0";
 const ARKESEL_SENDER  = "Sentinel360";
-const ESCALATION_MAX_ATTEMPTS = 5;
-const ESCALATION_INTERVAL_MS = 60 * 1000; // 1 min between prompts
+const ESCALATION_MAX_ATTEMPTS = 3;
+// Progressive intervals between prompts: 1 min → 2 min → then SOS
+// Index = number of attempts already sent (1 → wait 1min, 2 → wait 2min, 3 → wait 1min then SOS)
+const ESCALATION_INTERVALS_MS = [
+  1 * 10 * 1000, // after prompt 1: wait 1 min before prompt 2
+  2 * 10 * 1000, // after prompt 2: wait 2 min before prompt 3
+  1 * 10 * 1000, // after prompt 3: wait 1 min then trigger SOS
+];
 const CONTEXT_ENRICH_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min throttle
 
 // ── Triggered when a new document is created in emergency_alerts 
@@ -177,8 +183,7 @@ exports.onCurrentStateUpdated = onDocumentWritten(
         status: "active",
         attemptsSent: 1,
         maxAttempts: ESCALATION_MAX_ATTEMPTS,
-        intervalMs: ESCALATION_INTERVAL_MS,
-        nextCheckAt: admin.firestore.Timestamp.fromMillis(now + ESCALATION_INTERVAL_MS),
+        nextCheckAt: admin.firestore.Timestamp.fromMillis(now + ESCALATION_INTERVALS_MS[0]),
         startedAt: admin.firestore.FieldValue.serverTimestamp(),
         lastPromptAt: admin.firestore.FieldValue.serverTimestamp(),
         overallRiskLevel: after.overallRiskLevel || "HIGH RISK",
@@ -212,11 +217,34 @@ exports.onEscalationResponse = onDocumentWritten(
     const escRef = db.collection("trip_escalations").doc(tripId);
 
     if (response === "OK") {
-      await escRef.update({
-        status: "resolved",
-        resolvedBy: "user_ok",
-        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      // User confirmed they're okay. Check if the trip is still flagged as
+      // unsafe — if so, reset the escalation after a 3-minute cooldown so
+      // the system re-checks rather than going silent for the rest of the trip.
+      const tripId2 = after.tripId || tripId;
+      const stateSnap = await db
+        .collection("trips").doc(tripId2)
+        .collection("current_state").doc("latest")
+        .get();
+      const stillUnsafe = stateSnap.exists && !!stateSnap.data().overallUnsafe;
+
+      if (stillUnsafe) {
+        // Reset escalation — will restart prompts after 3 min cooldown.
+        const cooldownMs = 3 * 60 * 1000;
+        await escRef.update({
+          status: "active",
+          attemptsSent: 0,
+          userResponse: null,
+          nextCheckAt: admin.firestore.Timestamp.fromMillis(Date.now() + cooldownMs),
+          lastOkAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        // Risk has cleared — fully resolve.
+        await escRef.update({
+          status: "resolved",
+          resolvedBy: "user_ok",
+          resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
       return;
     }
 
@@ -259,7 +287,7 @@ exports.processActiveEscalations = onSchedule(
         await triggerSosForEscalation({
           tripId,
           userId,
-          triggerSource: "unresponsive_after_5_prompts",
+          triggerSource: "unresponsive_after_3_prompts",
         });
         continue;
       }
@@ -275,7 +303,7 @@ exports.processActiveEscalations = onSchedule(
         attemptsSent: nextAttempt,
         lastPromptAt: admin.firestore.FieldValue.serverTimestamp(),
         nextCheckAt: admin.firestore.Timestamp.fromMillis(
-          Date.now() + ESCALATION_INTERVAL_MS
+          Date.now() + (ESCALATION_INTERVALS_MS[attemptsSent] ?? ESCALATION_INTERVALS_MS[ESCALATION_INTERVALS_MS.length - 1])
         ),
       });
     }
@@ -469,6 +497,22 @@ async function triggerSosForEscalation({ tripId, userId, triggerSource }) {
   if (!tripId || !userId) return;
   const escRef = db.collection("trip_escalations").doc(tripId);
 
+  // Resolve the passenger's last known GPS position before the transaction.
+  let location = new admin.firestore.GeoPoint(5.6037, -0.1870); // Accra fallback
+  try {
+    const tripSnap = await db.collection("trips").doc(tripId).get();
+    if (tripSnap.exists) {
+      const td = tripSnap.data();
+      if (td.context_meta?.lat != null && td.context_meta?.lon != null) {
+        location = new admin.firestore.GeoPoint(td.context_meta.lat, td.context_meta.lon);
+      } else if (td.originGeo instanceof admin.firestore.GeoPoint) {
+        location = td.originGeo;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch trip location for auto-SOS:", err.message);
+  }
+
   await db.runTransaction(async (tx) => {
     const escSnap = await tx.get(escRef);
     const escData = escSnap.exists ? escSnap.data() : {};
@@ -488,6 +532,7 @@ async function triggerSosForEscalation({ tripId, userId, triggerSource }) {
     tx.set(db.collection("emergency_alerts").doc(), {
       userId,
       tripId,
+      location,
       triggerSource,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       status: "triggered",

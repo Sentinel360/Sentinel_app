@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'sensor_service.dart';
 import 'ble_service.dart';
 import 'emergency_service.dart';
+import 'trip_foreground_service.dart';
 
 enum TripPhase { idle, starting, active, ending }
 
@@ -130,16 +131,17 @@ class TripManager {
         tripPayload['routePolyline'] = routePolylinePreview;
       }
 
-      final tripRef = await _db.collection('trips').add(tripPayload);
+      // Create the trip and set activeTripId atomically so a crash between
+      // the two writes cannot leave an orphaned trip the app can't recover.
+      final tripRef = _db.collection('trips').doc();
+      final userRef = _db.collection('users').doc(uid);
+      final batch = _db.batch();
+      batch.set(tripRef, tripPayload);
+      batch.update(userRef, {'activeTripId': tripRef.id});
+      await batch.commit();
 
       final tripId = tripRef.id;
       debugPrint('TripManager: Created trip $tripId');
-
-      // Store activeTripId on the user document so the emergency screen,
-      // ride_status_screen, and app-restart recovery can find the active trip.
-      await _db.collection('users').doc(uid).update({
-        'activeTripId': tripId,
-      });
 
       // Initialize the new current-state document path used by the app listener:
       // trips/{tripId}/current_state/latest
@@ -191,6 +193,10 @@ class TripManager {
           _state.copyWith(elapsed: DateTime.now().difference(_tripStartTime!)),
         );
       });
+
+      // Start the foreground service so Android keeps this process alive
+      // when the user backgrounds the app during a trip.
+      await TripForegroundService.start();
 
       _updateState(
         _state.copyWith(
@@ -267,6 +273,7 @@ class TripManager {
       _tripStartTime = null;
       _gpsBreadcrumbs.clear();
       _totalDistanceKm = 0.0;
+      await TripForegroundService.stop();
       _updateState(
         ActiveTripState(
           phase: TripPhase.idle,
@@ -278,6 +285,7 @@ class TripManager {
       debugPrint('TripManager: Error ending trip - $e');
       _gpsBreadcrumbs.clear();
       _totalDistanceKm = 0.0;
+      await TripForegroundService.stop();
       _updateState(
         ActiveTripState(
           phase: TripPhase.idle,
@@ -364,6 +372,127 @@ class TripManager {
       debugPrint('TripManager: SOS GPS fallback — $e');
       return const GeoPoint(5.6037, -0.1870);
     }
+  }
+
+  /// Checks Firestore for an interrupted trip without starting anything.
+  ///
+  /// Returns a map with `{tripId, destinationName, startedAt}` if a recent
+  /// active trip is found, or null if there is nothing to recover.
+  ///
+  /// Trips older than [staleThreshold] are silently abandoned — no dialog.
+  Future<Map<String, dynamic>?> findInterruptedTrip({
+    Duration staleThreshold = const Duration(hours: 4),
+  }) async {
+    if (_state.phase != TripPhase.idle) return null;
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return null;
+
+      final userDoc = await _db.collection('users').doc(uid).get();
+      final activeTripId = userDoc.data()?['activeTripId'] as String?;
+      if (activeTripId == null || activeTripId.isEmpty) return null;
+
+      final tripDoc = await _db.collection('trips').doc(activeTripId).get();
+      if (!tripDoc.exists) return null;
+
+      final tripData = tripDoc.data()!;
+      if (tripData['status'] != 'active') return null;
+
+      // Check how long ago the trip started.
+      final startedAt = (tripData['startedAt'] as Timestamp?)?.toDate();
+      if (startedAt != null &&
+          DateTime.now().difference(startedAt) > staleThreshold) {
+        // Too old — silently mark as abandoned so it doesn't linger forever.
+        debugPrint('TripManager: Abandoning stale trip $activeTripId');
+        await _abandonTrip(activeTripId, uid);
+        return null;
+      }
+
+      return {
+        'tripId': activeTripId,
+        'destinationName': tripData['destinationName'] as String? ?? 'your destination',
+        'startedAt': startedAt,
+      };
+    } catch (e) {
+      debugPrint('TripManager: findInterruptedTrip error — $e');
+      return null;
+    }
+  }
+
+  /// Resumes an interrupted trip after the user confirms they are still on it.
+  Future<void> resumeTrip(String tripId) async {
+    if (_state.phase != TripPhase.idle) return;
+
+    try {
+      final tripDoc = await _db.collection('trips').doc(tripId).get();
+      if (!tripDoc.exists) return;
+      final tripData = tripDoc.data()!;
+
+      await _sensorService.startMonitoring(tripId);
+
+      _riskSubscription = _sensorService.riskStream.listen((risk) {
+        _updateState(
+          _state.copyWith(
+            latestRisk: risk,
+            activeSource: risk.activeSensor == ActiveSensor.iot ? 'IOT' : 'PHONE',
+          ),
+        );
+      });
+
+      _tripStartTime = DateTime.now();
+      _gpsBreadcrumbs.clear();
+      _totalDistanceKm = (tripData['distance'] as num?)?.toDouble() ?? 0.0;
+
+      _startDistanceTracking();
+
+      _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _updateState(
+          _state.copyWith(elapsed: DateTime.now().difference(_tripStartTime!)),
+        );
+      });
+
+      await TripForegroundService.start();
+
+      _bleService.connect().then((connected) {
+        if (connected) _bleService.onTripStart();
+      });
+
+      _updateState(
+        ActiveTripState(
+          phase: TripPhase.active,
+          tripId: tripId,
+          elapsed: Duration.zero,
+          bleState: _bleService.state,
+        ),
+      );
+
+      debugPrint('TripManager: Resumed trip $tripId');
+    } catch (e) {
+      debugPrint('TripManager: resumeTrip error — $e');
+    }
+  }
+
+  /// Marks a trip as abandoned when the user confirms they have arrived,
+  /// or when the trip is too old to be relevant.
+  Future<void> _abandonTrip(String tripId, String uid) async {
+    try {
+      await _db.collection('trips').doc(tripId).update({
+        'status': 'completed',
+        'endedAt': FieldValue.serverTimestamp(),
+        'endReason': 'abandoned_on_reopen',
+      });
+      await _db.collection('users').doc(uid).update({'activeTripId': null});
+    } catch (e) {
+      debugPrint('TripManager: _abandonTrip error — $e');
+    }
+  }
+
+  /// Called when the user taps "I've arrived" on the recovery dialog.
+  Future<void> markTripArrived(String tripId) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    await _abandonTrip(tripId, uid);
   }
 
   Stream<Map<String, dynamic>?> escalationStream(String tripId) {
