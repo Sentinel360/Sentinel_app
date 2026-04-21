@@ -101,7 +101,10 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
         .doc(tripId)
         .snapshots()
         .map((doc) => doc.exists ? doc.data() : null)
-        .listen(_onEscalationUpdate);
+        .listen(
+          _onEscalationUpdate,
+          onError: (e) => debugPrint('[SCL] escalation stream error: $e'),
+        );
   }
 
   void _onEscalationUpdate(Map<String, dynamic>? data) {
@@ -196,7 +199,7 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
 
 // ── Dialog UI ────────────────────────────────────────────────────────────────
 
-class _SafetyCheckDialog extends StatelessWidget {
+class _SafetyCheckDialog extends StatefulWidget {
   const _SafetyCheckDialog({
     required this.attempt,
     required this.maxAttempts,
@@ -210,111 +213,248 @@ class _SafetyCheckDialog extends StatelessWidget {
   final VoidCallback onNotOk;
 
   @override
+  State<_SafetyCheckDialog> createState() => _SafetyCheckDialogState();
+}
+
+class _SafetyCheckDialogState extends State<_SafetyCheckDialog>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseScale;
+
+  static const Color _brand    = Color(0xFF22D3EE);
+  static const Color _darkNav  = Color(0xFF0F172A);
+  static const Color _danger   = Color(0xFFEF4444);
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+    _pulseScale = Tween<double>(begin: 1.0, end: 1.07).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final bool isFinal = widget.attempt == widget.maxAttempts;
+    final Color ringColor = isFinal ? _danger : _brand;
+
     return PopScope(
       canPop: false,
       child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(32),
-                ),
-                child: const Icon(
-                  Icons.warning_amber_rounded,
-                  color: Color(0xFFD97706),
-                  size: 36,
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              Text(
-                'Safety Check',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF111827),
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              Text(
-                'Sentinel 360 has detected an unusual trip pattern.\nAre you okay?',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  color: const Color(0xFF6B7280),
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 6),
-
-              Text(
-                'Check $attempt of $maxAttempts — no response will alert your emergency contacts.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 12,
-                  color: const Color(0xFF9CA3AF),
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: onOk,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF16A34A),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: Text(
-                    "I'm OK",
-                    style: GoogleFonts.inter(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: OutlinedButton(
-                  onPressed: onNotOk,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFDC2626),
-                    side: const BorderSide(
-                        color: Color(0xFFDC2626), width: 1.5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Text(
-                    'I need help',
-                    style: GoogleFonts.inter(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.40),
+                blurRadius: 48,
+                offset: const Offset(0, 20),
               ),
             ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ── Dark header ───────────────────────────────────────
+                Container(
+                  width: double.infinity,
+                  color: _darkNav,
+                  padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+                  child: Column(
+                    children: [
+                      ScaleTransition(
+                        scale: _pulseScale,
+                        child: SizedBox(
+                          width: 92,
+                          height: 92,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              SizedBox(
+                                width: 92,
+                                height: 92,
+                                child: CircularProgressIndicator(
+                                  value: widget.attempt / widget.maxAttempts,
+                                  backgroundColor:
+                                      Colors.white.withValues(alpha: 0.10),
+                                  color: ringColor,
+                                  strokeWidth: 3.5,
+                                  strokeCap: StrokeCap.round,
+                                ),
+                              ),
+                              Container(
+                                width: 70,
+                                height: 70,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: ringColor.withValues(alpha: 0.12),
+                                ),
+                                child: Icon(
+                                  isFinal
+                                      ? Icons.warning_rounded
+                                      : Icons.shield_outlined,
+                                  color: ringColor,
+                                  size: 34,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'SAFETY CHECK',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: _brand,
+                          letterSpacing: 2.5,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Check ${widget.attempt} of ${widget.maxAttempts}',
+                        style: GoogleFonts.inter(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ── White body ────────────────────────────────────────
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(24, 22, 24, 24),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Are you okay?',
+                        style: GoogleFonts.inter(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
+                          color: _darkNav,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Sentinel 360 detected an unusual\ntrip pattern.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          color: const Color(0xFF64748B),
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Attempt progress dots
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(widget.maxAttempts, (i) {
+                          final filled = i < widget.attempt;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            width: filled ? 22 : 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(4),
+                              color: filled
+                                  ? (isFinal ? _danger : _brand)
+                                  : const Color(0xFFE2E8F0),
+                            ),
+                          );
+                        }),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        isFinal
+                            ? 'Last check — no response will immediately\nalert your emergency contacts.'
+                            : 'No response after ${widget.maxAttempts} checks will alert\nyour emergency contacts.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                          fontSize: 11.5,
+                          color: isFinal
+                              ? _danger.withValues(alpha: 0.85)
+                              : const Color(0xFF94A3B8),
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+
+                      // I'm OK
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton.icon(
+                          onPressed: widget.onOk,
+                          icon: const Icon(
+                              Icons.check_circle_outline_rounded, size: 19),
+                          label: Text(
+                            "I'm OK",
+                            style: GoogleFonts.inter(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _brand,
+                            foregroundColor: _darkNav,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+
+                      // I need help
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton.icon(
+                          onPressed: widget.onNotOk,
+                          icon: const Icon(Icons.sos_rounded, size: 19),
+                          label: Text(
+                            'I need help',
+                            style: GoogleFonts.inter(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _danger,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

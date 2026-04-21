@@ -80,13 +80,21 @@ service cloud.firestore {
     // Trip escalations — Cloud Functions create/update (admin SDK),
     // but the app needs to READ the doc (SafetyCheckListener dialog)
     // and WRITE userResponse ("OK" / "NOT_OK") back to it.
+    //
+    // IMPORTANT: resource is null when the document does not yet exist.
+    // SafetyCheckListener subscribes to this path as soon as a trip starts
+    // (before the Cloud Function has created the doc). Allowing read on a
+    // non-existent document (resource == null) is safe — there is nothing
+    // to read — and it keeps the real-time listener alive so it receives
+    // the snapshot the moment the Cloud Function creates the document.
     // ---------------------------------------------------------------
     match /trip_escalations/{tripId} {
       allow read: if request.auth != null
-        && resource.data.userId == request.auth.uid;
+        && (resource == null || resource.data.userId == request.auth.uid);
       // Clients may only update (write userResponse back) — never create.
       // Creation is done exclusively by Cloud Functions via Admin SDK.
       allow update: if request.auth != null
+        && resource != null
         && resource.data.userId == request.auth.uid;
     }
 

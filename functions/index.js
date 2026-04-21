@@ -16,12 +16,13 @@ setGlobalOptions({ maxInstances: 10 });
 const ARKESEL_API_KEY = "RXV4YXpMdFNxQkZpZWdkR2NaUk0";
 const ARKESEL_SENDER  = "Sentinel360";
 const ESCALATION_MAX_ATTEMPTS = 3;
-// Progressive intervals between prompts: 1 min → 2 min → then SOS
-// Index = number of attempts already sent (1 → wait 1min, 2 → wait 2min, 3 → wait 1min then SOS)
+// !! TESTING VALUES — intervals set to 5s so each scheduler tick fires next prompt immediately.
+// RESTORE before final submission:
+//   [1 * 60 * 1000, 2 * 60 * 1000, 1 * 60 * 1000]
 const ESCALATION_INTERVALS_MS = [
-  1 * 10 * 1000, // after prompt 1: wait 1 min before prompt 2
-  2 * 10 * 1000, // after prompt 2: wait 2 min before prompt 3
-  1 * 10 * 1000, // after prompt 3: wait 1 min then trigger SOS
+  5 * 1000, // after prompt 1 → prompt 2 fires on next scheduler tick
+  5 * 1000, // after prompt 2 → prompt 3 fires on next schduler tick
+  5 * 1000, // after prompt 3 → SOS fires on next scheduler tick
 ];
 const CONTEXT_ENRICH_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min throttle
 
@@ -161,24 +162,21 @@ exports.onCurrentStateUpdated = onDocumentWritten(
     const userId = tripData.userId || tripData.driver_id;
     if (!userId) return;
 
-    if (!overallUnsafe) return;
+    if (!overallUnsafe) {
+      // Close any active escalation when trip risk returns to non-unsafe.
+      const escSnap = await escalationRef.get();
+      if (escSnap.exists && escSnap.data().status === "active") {
+        await escalationRef.update({
+          status: "resolved",
+          resolvedBy: "risk_recovered",
+          resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      return;
+    }
 
     // Start escalation only when unsafe state starts.
     if (becameUnsafe) {
-      // Check if user recently acknowledged an escalation — if so, skip creating a new one
-      const existingEscSnap = await escalationRef.get();
-      if (existingEscSnap.exists) {
-        const escData = existingEscSnap.data();
-        const lastOkAt = escData.lastOkAt?.toMillis() ?? 0;
-        const fiveMinutes = 5 * 60 * 1000;
-        if (
-          (escData.status === "cooling_down" || escData.status === "resolved") &&
-          Date.now() - lastOkAt < fiveMinutes
-        ) {
-          return; // user acknowledged recently, do not re-escalate yet
-        }
-      }
-
       const now = Date.now();
       await escalationRef.set({
         tripId,
@@ -231,10 +229,10 @@ exports.onEscalationResponse = onDocumentWritten(
       const stillUnsafe = stateSnap.exists && !!stateSnap.data().overallUnsafe;
 
       if (stillUnsafe) {
-        // Reset escalation — will restart prompts after 3 min cooldown.
-        const cooldownMs = 3 * 60 * 1000;
+        // !! TESTING: 30s cooldown. Restore to 3 * 60 * 1000 before submission.
+        const cooldownMs = 30 * 1000;
         await escRef.update({
-          status: "cooling_down",
+          status: "active",
           attemptsSent: 0,
           userResponse: null,
           nextCheckAt: admin.firestore.Timestamp.fromMillis(Date.now() + cooldownMs),
@@ -285,18 +283,6 @@ exports.processActiveEscalations = onSchedule(
       const sosTriggered = !!data.sosTriggered;
 
       if (responded || sosTriggered) continue;
-
-      if (data.status === "cooling_down") {
-        const nextCheckAt = data.nextCheckAt?.toMillis() ?? 0;
-        if (Date.now() < nextCheckAt) continue; // still cooling down
-        await doc.ref.update({ status: "active", attemptsSent: 1 });
-        await sendSafetyPrompt({ userId, tripId, attempt: 1 });
-        await doc.ref.update({
-          lastPromptAt: admin.firestore.FieldValue.serverTimestamp(),
-          nextCheckAt: admin.firestore.Timestamp.fromMillis(Date.now() + ESCALATION_INTERVALS_MS[0]),
-        });
-        continue;
-      }
 
       if (attemptsSent >= ESCALATION_MAX_ATTEMPTS) {
         await triggerSosForEscalation({
@@ -496,15 +482,6 @@ async function sendSafetyPrompt({ userId, tripId, attempt }) {
       await admin.messaging().sendEachForMulticast({
         tokens,
         notification: { title, body },
-        android: {
-          notification: {
-            channelId: "sentinel360_safety",
-            priority: "high",
-          },
-        },
-        apns: {
-          payload: { aps: { sound: "default", badge: 1 } },
-        },
         data: {
           type: "SAFETY_CHECK",
           tripId,
