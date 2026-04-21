@@ -161,21 +161,24 @@ exports.onCurrentStateUpdated = onDocumentWritten(
     const userId = tripData.userId || tripData.driver_id;
     if (!userId) return;
 
-    if (!overallUnsafe) {
-      // Close any active escalation when trip risk returns to non-unsafe.
-      const escSnap = await escalationRef.get();
-      if (escSnap.exists && escSnap.data().status === "active") {
-        await escalationRef.update({
-          status: "resolved",
-          resolvedBy: "risk_recovered",
-          resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-      return;
-    }
+    if (!overallUnsafe) return;
 
     // Start escalation only when unsafe state starts.
     if (becameUnsafe) {
+      // Check if user recently acknowledged an escalation — if so, skip creating a new one
+      const existingEscSnap = await escalationRef.get();
+      if (existingEscSnap.exists) {
+        const escData = existingEscSnap.data();
+        const lastOkAt = escData.lastOkAt?.toMillis() ?? 0;
+        const fiveMinutes = 5 * 60 * 1000;
+        if (
+          (escData.status === "cooling_down" || escData.status === "resolved") &&
+          Date.now() - lastOkAt < fiveMinutes
+        ) {
+          return; // user acknowledged recently, do not re-escalate yet
+        }
+      }
+
       const now = Date.now();
       await escalationRef.set({
         tripId,
@@ -231,7 +234,7 @@ exports.onEscalationResponse = onDocumentWritten(
         // Reset escalation — will restart prompts after 3 min cooldown.
         const cooldownMs = 3 * 60 * 1000;
         await escRef.update({
-          status: "active",
+          status: "cooling_down",
           attemptsSent: 0,
           userResponse: null,
           nextCheckAt: admin.firestore.Timestamp.fromMillis(Date.now() + cooldownMs),
@@ -282,6 +285,18 @@ exports.processActiveEscalations = onSchedule(
       const sosTriggered = !!data.sosTriggered;
 
       if (responded || sosTriggered) continue;
+
+      if (data.status === "cooling_down") {
+        const nextCheckAt = data.nextCheckAt?.toMillis() ?? 0;
+        if (Date.now() < nextCheckAt) continue; // still cooling down
+        await doc.ref.update({ status: "active", attemptsSent: 1 });
+        await sendSafetyPrompt({ userId, tripId, attempt: 1 });
+        await doc.ref.update({
+          lastPromptAt: admin.firestore.FieldValue.serverTimestamp(),
+          nextCheckAt: admin.firestore.Timestamp.fromMillis(Date.now() + ESCALATION_INTERVALS_MS[0]),
+        });
+        continue;
+      }
 
       if (attemptsSent >= ESCALATION_MAX_ATTEMPTS) {
         await triggerSosForEscalation({
@@ -481,6 +496,15 @@ async function sendSafetyPrompt({ userId, tripId, attempt }) {
       await admin.messaging().sendEachForMulticast({
         tokens,
         notification: { title, body },
+        android: {
+          notification: {
+            channelId: "sentinel360_safety",
+            priority: "high",
+          },
+        },
+        apns: {
+          payload: { aps: { sound: "default", badge: 1 } },
+        },
         data: {
           type: "SAFETY_CHECK",
           tripId,

@@ -34,6 +34,7 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
   StreamSubscription<Map<String, dynamic>?>? _escalationSub;
   String? _monitoredTripId;
   bool _dialogVisible = false;
+  int _shownAttempt = 0;
 
   @override
   void initState() {
@@ -55,7 +56,18 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
 
   Future<void> _restoreActiveTripFromFirestore() async {
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
+      // On cold start Firebase Auth restores its session asynchronously —
+      // currentUser is briefly null even for a signed-in user. Wait up to
+      // 5 seconds for the session to be available before giving up.
+      String? uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        final user = await FirebaseAuth.instance
+            .authStateChanges()
+            .firstWhere((u) => u != null, orElse: () => null)
+            .timeout(const Duration(seconds: 5), onTimeout: () => null);
+        if (!mounted) return;
+        uid = user?.uid;
+      }
       if (uid == null) return;
 
       final userSnap = await _db.collection('users').doc(uid).get();
@@ -75,6 +87,7 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
   }
 
   void _subscribeToEscalation(String? tripId) {
+    debugPrint('[SCL] _subscribeToEscalation: tripId=$tripId (was $_monitoredTripId)');
     _escalationSub?.cancel();
     _monitoredTripId = tripId;
 
@@ -92,16 +105,24 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
   }
 
   void _onEscalationUpdate(Map<String, dynamic>? data) {
-    if (data == null) return;
+    if (data == null) {
+      debugPrint('[SCL] _onEscalationUpdate: no document');
+      return;
+    }
 
     final status = data['status'] as String? ?? '';
     final userResponse = data['userResponse'];
     final attemptsSent = (data['attemptsSent'] as int?) ?? 1;
     final maxAttempts = (data['maxAttempts'] as int?) ?? 3;
 
+    debugPrint('[SCL] _onEscalationUpdate: status=$status userResponse=$userResponse attempts=$attemptsSent dialogVisible=$_dialogVisible');
+
     final shouldShow = status == 'active' && userResponse == null;
 
     if (shouldShow && !_dialogVisible) {
+      _showDialog(attempt: attemptsSent, maxAttempts: maxAttempts);
+    } else if (shouldShow && _dialogVisible && attemptsSent != _shownAttempt) {
+      _dismissDialog();
       _showDialog(attempt: attemptsSent, maxAttempts: maxAttempts);
     } else if (!shouldShow && _dialogVisible) {
       _dismissDialog();
@@ -109,10 +130,13 @@ class _SafetyCheckListenerState extends State<SafetyCheckListener> {
   }
 
   void _showDialog({required int attempt, required int maxAttempts}) {
+    debugPrint('[SCL] _showDialog: attempt=$attempt');
     _dialogVisible = true;
+    _shownAttempt = attempt;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_dialogVisible) return;
       final navigator = rootNavigatorKey.currentState;
+      debugPrint('[SCL] postFrameCallback: mounted=$mounted dialogVisible=$_dialogVisible navigatorNull=${navigator == null}');
+      if (!mounted || !_dialogVisible) return;
       if (navigator == null) return;
 
       showDialog<void>(

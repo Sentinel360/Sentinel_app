@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "trip_escalations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "nextCheckAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
